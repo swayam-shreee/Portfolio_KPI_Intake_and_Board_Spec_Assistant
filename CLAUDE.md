@@ -20,6 +20,8 @@ pytest                                # checks and metric formulas
 pytest tests/test_metrics.py::test_x  # single test
 python eval/score.py                  # compare review-queue flags to answer_key.json
 pytest tests/test_review_loop_checker.py   # stage 6a review loop (locked checker)
+pytest tests/test_dashboard_checker.py     # stage 6 dashboard (locked checker, AppTest)
+python scripts/demo_commentary.py     # manual: real Claude call (needs ANTHROPIC_API_KEY)
 ```
 
 ## Architecture (big picture)
@@ -34,6 +36,7 @@ pytest tests/test_review_loop_checker.py   # stage 6a review loop (locked checke
   - Confirm is valid for `unknown_label` (learn the alias), `impossible_value` (accept as reported), `duplicate_submission` and `prompt_injection` (close; no value taken). Other error types raise `ValueError`; unknown or closed IDs raise `KeyError`.
   - It calls `run.run(paths, aliases_path=, accepted=)` and `metrics.compute(..., months=p.months)` through their modules and splices the one company's rows back in canonical order. `months` is fixed at first load, so a single-company compute keeps the portfolio's period.
   - New keyword parameters (defaults keep old behavior): `run.run(aliases_path, accepted)`, `checks.run_checks(accepted)`, `mapping.match_label/to_records(aliases_path)`, `metrics.compute(months)`. `mapping.learn_alias(label, metric, path)` inserts one double-quoted line after the metric's last entry without re-serializing the file.
+- **Dashboard (stage 6; spec `docs/stage6_dashboard_checker_spec.md`):** `app.py` (overview) and `pages/1_Upload.py`, `2_Review_queue.py`, `3_Board_draft.py` hold only layout and button handlers. Logic is in `dashboard/` (no Streamlit import): `views.py` (overview, metric_detail, queue_rows, section_name, sources_rows, fingerprint), `uploads.py` (`save_uploads` -> `UploadResult`, into `state_dir/uploads/`), `export.py` (`draft_to_docx`), `approvals.py` (`record` -> `state_dir/approvals.jsonl`, hashes and counts only), `session.py` (cfg lookup, reload from saved uploads). `pipeline/llm.py` holds `AnthropicClient`; pages call `llm.AnthropicClient()` only inside the Generate/Regenerate handler, or use `session_state["claude_client"]`. Rendered text goes only through `st.text`, `st.dataframe` or `st.code`. No caching in dashboard files.
 - **Notifications** go through the `Notifier` interface in `integrations/notify.py`: console now, Teams later as a new class, with no change to the processing code.
 - **Idempotency and audit:** dedupe uploads by file hash, and save each run's inputs, flags, and decisions.
 

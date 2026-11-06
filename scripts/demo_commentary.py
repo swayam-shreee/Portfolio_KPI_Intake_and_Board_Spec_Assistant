@@ -5,7 +5,6 @@ Not part of the checker. Reads ANTHROPIC_API_KEY and CLAUDE_MODEL (default claud
 from __future__ import annotations
 
 import glob
-import os
 import sys
 from pathlib import Path
 
@@ -14,27 +13,8 @@ sys.path.insert(0, str(ROOT))
 
 from pipeline.commentary import draft_commentary  # noqa: E402
 from pipeline.contract import compute_metrics  # noqa: E402
+from pipeline.llm import AnthropicClient  # noqa: E402
 from pipeline.run import run  # noqa: E402
-
-
-class AnthropicClient:
-    def __init__(self) -> None:
-        import anthropic
-        self.model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5-5")
-        self._client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
-
-    def create(self, system: str, user: str) -> str:
-        msg = self._client.messages.create(
-            model=self.model, max_tokens=8192, system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        print(f"[claude] stop_reason={msg.stop_reason} "
-              f"input_tokens={msg.usage.input_tokens} output_tokens={msg.usage.output_tokens}",
-              file=sys.stderr)
-        if msg.stop_reason == "max_tokens":
-            print("[claude] WARNING: response truncated at max_tokens; output is likely incomplete.",
-                  file=sys.stderr)
-        return "".join(b.text for b in msg.content if b.type == "text")
 
 
 def main() -> None:
