@@ -68,7 +68,7 @@ class RunResult:
 
 
 def compute_metrics(table: pd.DataFrame, review_queue: list[ReviewItem]) -> pd.DataFrame:
-    """Stage 4: validated table + review queue -> metrics (implemented in pipeline.metrics).
+    """Contract for stage 4 (implemented in pipeline.metrics): validated table + review queue -> metrics.
 
     Returns a DataFrame with columns ``METRIC_COLUMNS``: company, month (``YYYY-MM`` or
     ``"12m"``), metric_id, value, inputs, blocked_reason.
@@ -95,8 +95,7 @@ def compute_metrics(table: pd.DataFrame, review_queue: list[ReviewItem]) -> pd.D
     Flagged inputs: derived vs reported.
       * A flagged DERIVED value counts as absent and is back-solved from that month's components
         (ending - new - expansion + contraction + churned). Derived means beginning_arr for files
-        with no beginning row (the pipeline takes it from the prior month's ending ARR; such a
-        row cites an ending_arr cell, which is how derived rows are recognised). It is
+        with no beginning row (the pipeline takes it from the prior month's ending ARR). It is
         also absent, and back-solved, when that prior ending ARR is flagged or missing, or when
         there is no prior month.
       * A flagged REPORTED value blocks every metric that uses it. Reported means any cell the
