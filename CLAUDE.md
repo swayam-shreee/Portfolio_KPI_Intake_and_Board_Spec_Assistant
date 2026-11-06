@@ -19,6 +19,7 @@ streamlit run app.py                  # dashboard; the upload page triggers the 
 pytest                                # checks and metric formulas
 pytest tests/test_metrics.py::test_x  # single test
 python eval/score.py                  # compare review-queue flags to answer_key.json
+pytest tests/test_review_loop_checker.py   # stage 6a review loop (locked checker)
 ```
 
 ## Architecture (big picture)
@@ -27,7 +28,12 @@ python eval/score.py                  # compare review-queue flags to answer_key
 - **Flow:** ingest (`ingest.py`: header-row detection by month-like values, months-as-columns → rows, unit detection, 0–1 → 0–100 percentages, newest-wins duplicate handling plus a flag) → mapping (`mapping.py`) → checks (`checks.py` → review queue) → metrics (`metrics.py`, only on rows that passed every check) → commentary (`commentary.py`).
 - **Canonical long table:** `company | month | metric | value_usd_k | source_file | source_cell`. Downstream code never reads a file's own labels, only these metric names: `beginning_arr, new_arr, expansion_arr, contraction_arr, churned_arr, ending_arr, revenue, gross_margin_pct, customers, headcount`. Money is stored in $K. Every value must keep its `source_file`/`source_cell` through the whole pipeline.
 - **Label matching runs in three layers, in this order:** `pipeline/aliases.yaml` exact lookup (after lowercasing and stripping units and punctuation) → rapidfuzz above a threshold → Claude, which returns a guess plus a confidence. Claude's guess always goes to review. Once a person confirms it, it is appended to the learned-alias copy at `outputs/state/aliases.yaml` (`Config.default().aliases_path`, seeded from `pipeline/aliases.yaml`). The tracked `pipeline/aliases.yaml` is never written by code; promoting learned aliases into it is a manual, reviewed change.
-- **Review loop:** resolving a review item reruns checks and metrics for that company only, so the overview and the draft update right away.
+- **Review loop (`pipeline/review.py`, stage 6a):** resolving a review item reruns checks and metrics for that company only, so the overview and the draft update right away. No Streamlit and no Claude in this module.
+  - API: `Config` (`Config.default()` points at `outputs/state`; it creates nothing), `Portfolio`, `load(cfg, paths=None)`, `rerun_company(p, company, cfg)`, `resolve(p, item_id, "confirm"|"reject", cfg)`, `item_id(item)`, `raw_label(p, item)`. `resolve` and `rerun_company` return a new `Portfolio`; the input is never mutated.
+  - `state_dir/decisions.jsonl` (append-only) is the source of truth and audit trail; `load` replays its `confirm` lines in file order (re-learning aliases, re-accepting values, re-closing items). `reject` is logged only. Each `load`/`resolve` also writes one `state_dir/runs/<µs>-<seq>-<load|resolve>.json` (file hashes, open item IDs, decisions; never reason or cell text).
+  - Confirm is valid for `unknown_label` (learn the alias), `impossible_value` (accept as reported), `duplicate_submission` and `prompt_injection` (close; no value taken). Other error types raise `ValueError`; unknown or closed IDs raise `KeyError`.
+  - It calls `run.run(paths, aliases_path=, accepted=)` and `metrics.compute(..., months=p.months)` through their modules and splices the one company's rows back in canonical order. `months` is fixed at first load, so a single-company compute keeps the portfolio's period.
+  - New keyword parameters (defaults keep old behavior): `run.run(aliases_path, accepted)`, `checks.run_checks(accepted)`, `mapping.match_label/to_records(aliases_path)`, `metrics.compute(months)`. `mapping.learn_alias(label, metric, path)` inserts one double-quoted line after the metric's last entry without re-serializing the file.
 - **Notifications** go through the `Notifier` interface in `integrations/notify.py`: console now, Teams later as a new class, with no change to the processing code.
 - **Idempotency and audit:** dedupe uploads by file hash, and save each run's inputs, flags, and decisions.
 

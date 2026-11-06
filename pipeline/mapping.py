@@ -5,6 +5,7 @@ An unknown label returns ``metric=None`` plus (when one is close enough) a
 """
 from __future__ import annotations
 
+import json
 import re
 import statistics
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from typing import Optional
 
 import yaml
 from rapidfuzz import fuzz, process
+
+from pipeline.contract import METRICS
 
 ALIASES_PATH = Path(__file__).with_name("aliases.yaml")
 AUTO_ACCEPT = 90.0   # fuzz.ratio at or above this: treated as a typo of a known alias
@@ -40,7 +43,7 @@ def normalize_label(label: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=4)
 def load_aliases(path: str = str(ALIASES_PATH)) -> dict[str, str]:
     """normalized alias -> metric"""
     raw = yaml.safe_load(Path(path).read_text()) or {}
@@ -51,11 +54,11 @@ def load_aliases(path: str = str(ALIASES_PATH)) -> dict[str, str]:
     return out
 
 
-def match_label(label: str) -> Match:
+def match_label(label: str, aliases_path=None) -> Match:
     norm = normalize_label(label)
     # "gross margin %" normalizes to "gross margin pct"; keep both spellings usable
     norm_nopct = re.sub(r"\bpct\b", "", norm).strip()
-    aliases = load_aliases()
+    aliases = load_aliases() if aliases_path is None else load_aliases(str(aliases_path))
     for cand in (norm, norm_nopct):
         if cand in aliases:
             return Match(aliases[cand], "alias")
@@ -71,6 +74,72 @@ def match_label(label: str) -> Match:
     return Match(None, "none", float(best[1]) if best else 0.0)
 
 
+# --------------------------------------------------------------------------- alias learning
+_LINES = re.compile(r"[^\n]*\n|[^\n]+")
+
+
+def learn_alias(label: str, metric: str, aliases_path: Path) -> None:
+    """Add one quoted list line for ``label`` under ``metric`` in the YAML file at ``aliases_path``.
+
+    Every existing line is kept as is: the new line goes directly after the last entry of the
+    metric's block (a missing block is created at the end). Nothing is written when the request
+    is refused (ValueError) or when the label is already an alias of that metric.
+    """
+    path = Path(aliases_path)
+    if metric not in METRICS:
+        raise ValueError(f"{metric!r} is not a metric")
+    if not isinstance(label, str) or looks_like_instruction(label):
+        raise ValueError("label is empty or looks like an instruction")
+    norm = normalize_label(label)
+    bare = re.sub(r"\bpct\b", "", norm).strip()
+    if not bare or norm in GENERIC or bare in GENERIC:
+        raise ValueError(f"label {label!r} is empty or too generic to learn")
+    original = path.read_bytes()
+    text = original.decode("utf-8")
+    data = yaml.safe_load(text) or {}
+    for other, names in data.items():
+        for n in names or []:
+            if normalize_label(n) == norm:
+                if other == metric:
+                    return
+                raise ValueError(f"label {label!r} already maps to {other}")
+    quoted = json.dumps(label, ensure_ascii=False)        # a JSON string is a YAML double-quoted scalar
+    lines = _LINES.findall(text)
+    header = re.compile(rf"{re.escape(metric)}:[ \t]*(#.*)?\r?\n?")
+    start = next((i for i, l in enumerate(lines) if header.fullmatch(l)), None)
+    if start is None:
+        if metric in data:
+            raise ValueError(f"cannot edit the {metric} block in place")
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(f"{metric}:\n")
+        lines.append(f"  - {quoted}\n")
+    else:
+        end = next((k for k in range(start + 1, len(lines))
+                    if lines[k][:1] not in (" ", "\t", "#", "\n", "\r", "-")), len(lines))
+        last = max((k for k in range(start + 1, end) if lines[k].lstrip().startswith("- ")), default=start)
+        eol = "\r\n" if lines[last].endswith("\r\n") else "\n"
+        indent = lines[last][:len(lines[last]) - len(lines[last].lstrip())] if last > start else "  "
+        newline = f"{indent}- {quoted}"
+        if lines[last].endswith("\n"):
+            newline += eol
+        else:                                              # last line of a file with no trailing newline
+            lines[last] += eol
+        lines.insert(last + 1, newline)
+    new_text = "".join(lines)
+    path.write_bytes(new_text.encode("utf-8"))
+    try:
+        back = yaml.safe_load(new_text)
+        ok = back[metric][-1] == label and {k: v for k, v in back.items() if k != metric} == \
+            {k: v for k, v in data.items() if k != metric}
+    except Exception:
+        ok = False
+    if not ok:
+        path.write_bytes(original)
+        raise ValueError(f"label {label!r} could not be written safely")
+    load_aliases.cache_clear()
+
+
 # --------------------------------------------------------------------------- canonical records
 MONEY = ("beginning_arr", "new_arr", "expansion_arr", "contraction_arr", "churned_arr",
          "ending_arr", "revenue")
@@ -84,14 +153,14 @@ def looks_like_instruction(text: str) -> bool:
     return _INJECTION_CUES.search(text) is not None
 
 
-def to_records(fd) -> tuple[list[dict], list]:
+def to_records(fd, aliases_path=None) -> tuple[list[dict], list]:
     """Map a FileData's series to canonical rows (value in $K / percent) and review items."""
     from pipeline.contract import ReviewItem
     recs: list[dict] = []
     items: list = []
     seen: set = set()
     for s in fd.series:
-        m = match_label(s.label)
+        m = match_label(s.label, aliases_path)
         if m.metric is None:
             quoted = "" if looks_like_instruction(s.label) else f" '{s.label[:60]}'"
             note = f"; closest known metric is {m.suggestion}" if m.suggestion else ""
