@@ -25,9 +25,15 @@ class AnthropicClient:
 
     def create(self, system: str, user: str) -> str:
         msg = self._client.messages.create(
-            model=self.model, max_tokens=2000, system=system,
+            model=self.model, max_tokens=8192, system=system,
             messages=[{"role": "user", "content": user}],
         )
+        print(f"[claude] stop_reason={msg.stop_reason} "
+              f"input_tokens={msg.usage.input_tokens} output_tokens={msg.usage.output_tokens}",
+              file=sys.stderr)
+        if msg.stop_reason == "max_tokens":
+            print("[claude] WARNING: response truncated at max_tokens; output is likely incomplete.",
+                  file=sys.stderr)
         return "".join(b.text for b in msg.content if b.type == "text")
 
 

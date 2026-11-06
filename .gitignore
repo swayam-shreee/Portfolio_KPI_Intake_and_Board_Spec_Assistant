@@ -6,3 +6,4 @@ __pycache__/
 .DS_Store
 eval/last_score.json
 eval/score_history.jsonl
+outputs/
