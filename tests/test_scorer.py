@@ -253,7 +253,13 @@ def test_invalid_error_type_fails_schema(good, key, gt):
     assert not run_score(RunResult(good.table, items), key, gt)["schema"]["passed"]
 
 
-def test_main_with_stub_pipeline_exits_1(tmp_path, monkeypatch):
+def test_main_with_failing_pipeline_exits_1(tmp_path, monkeypatch):
+    import pipeline.run
+
+    def boom(paths):
+        raise NotImplementedError("stub")
+
+    monkeypatch.setattr(pipeline.run, "run", boom)
     monkeypatch.setattr(S, "OUT_DIR", tmp_path)
     assert S.main() == 1
     data = json.loads((tmp_path / "last_score.json").read_text())
