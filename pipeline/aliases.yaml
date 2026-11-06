@@ -1,0 +1,58 @@
+# Known label names per standard metric. Matched after lowercasing and stripping
+# units, symbols and punctuation (see mapping.normalize_label).
+beginning_arr:
+  - beginning arr
+  - opening arr
+  - starting arr
+  - arr beginning of period
+  - arr start of month
+new_arr:
+  - new arr
+  - new customer arr
+  - new logo arr
+  - new bookings
+  - new business arr
+expansion_arr:
+  - expansion
+  - expansion arr
+  - upsell
+  - upsell arr
+  - upgrades
+contraction_arr:
+  - contraction
+  - contraction arr
+  - downgrades
+  - downsell
+  - downsell arr
+churned_arr:
+  - churned arr
+  - churn
+  - churn arr
+  - lost customers arr
+  - lost arr
+ending_arr:
+  - ending arr
+  - closing arr
+  - annual recurring revenue
+  - annual recurring rev
+  - arr
+revenue:
+  - revenue
+  - total revenue
+  - total rev
+  - monthly revenue
+gross_margin_pct:
+  - gross margin
+  - gm
+  - gross margin pct
+customers:
+  - customers
+  - customer count
+  - logos
+  - number of customers
+headcount:
+  - headcount
+  - employees
+  - ftes
+  - fte
+  - employee count

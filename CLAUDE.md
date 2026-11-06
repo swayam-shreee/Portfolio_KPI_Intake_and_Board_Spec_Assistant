@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The repo currently holds only the design doc, `Portfolio KPI Intake and Board Report Assistant — Project Spec.md`. That doc is the source of truth for scope, schema, checks, metric formulas, and build order. No code exists yet. Build in the spec's stage order (test data → ingest/mapping → checks/metrics → commentary → dashboard → eval), one stage at a time, and commit after each stage. Update this file as real commands and modules appear.
+The design doc, `../Portfolio KPI Intake and Board Report Assistant — Project Spec.md`, sits in the parent folder outside this repo. It is the source of truth for scope, schema, checks, metric formulas, and build order. The folder structure is scaffolded with empty files; no code exists yet. Build in the spec's stage order (ingest/mapping → checks/metrics → commentary → dashboard → eval), one stage at a time, and commit after each stage. Update this file as real commands and modules appear.
 
 ## What it is
 
@@ -15,7 +15,6 @@ Stack: pandas + openpyxl (openpyxl is needed for cell coordinates), PyYAML + rap
 ## Planned commands (from the spec; verify once they exist)
 
 ```
-python data/generate_test_data.py     # writes data/raw/* and answer_key.json
 streamlit run app.py                  # dashboard; the upload page triggers the full pipeline
 pytest                                # checks and metric formulas
 pytest tests/test_metrics.py::test_x  # single test
@@ -42,7 +41,7 @@ python eval/score.py                  # compare review-queue flags to answer_key
 
 ## Test data and evaluation contract
 
-The generator builds five companies with 12 months each, a distinct layout per company, and planted errors listed in the spec's test-data table. Ridgeline is the clean control and must produce zero flags. `answer_key.json` lists each planted error as {company, month, metric, error type}, and the review-queue flags must be comparable to it so `eval/score.py` can score recall and false flags automatically. If you change a check or a planted error, update the answer key with it.
+The test files are prepared outside this project and placed in `data/raw/`; do not write a data generator. They cover five companies with 12 months each, a distinct layout per company, and the planted errors listed in the spec's test-data table. Ridgeline is the clean control and must produce zero flags. `answer_key.json` lists each planted error as {company, month, metric, error type}, and the review-queue flags must be comparable to it so `eval/score.py` can score recall and false flags automatically. If you change a check or a planted error, update the answer key with it.
 
 ## Out of scope
 
