@@ -1,0 +1,133 @@
+{
+  "timestamp": "2026-11-06T03:43:52+00:00",
+  "git_sha": "f2df67c",
+  "overall_pass": false,
+  "pipeline_error": "NotImplementedError: ",
+  "sections": {
+    "schema": false,
+    "recall": false,
+    "false_flags": false,
+    "values": false,
+    "traceability": false,
+    "duplicates": false,
+    "injection": false
+  },
+  "recall": "0/7",
+  "recall_failed": [
+    "E1",
+    "E2",
+    "E3",
+    "E4",
+    "E5",
+    "E6",
+    "E7"
+  ],
+  "false_flags": null,
+  "ridgeline_flags": null,
+  "value_pct": null,
+  "value_mismatches": null,
+  "traceability_failures": null,
+  "detail": {
+    "schema": {
+      "passed": false,
+      "problems": [
+        "pipeline did not return a result"
+      ]
+    },
+    "recall": {
+      "passed": false,
+      "hit": 0,
+      "total": 7,
+      "per_error": {
+        "E1": {
+          "passed": false,
+          "type": "missing_month",
+          "company": "Harborview Compliance",
+          "month": "2026-03",
+          "metric": "all",
+          "n_flags": 0
+        },
+        "E2": {
+          "passed": false,
+          "type": "rollforward_mismatch",
+          "company": "Harborview Compliance",
+          "month": "2026-07",
+          "metric": "ending_arr",
+          "n_flags": 0
+        },
+        "E3": {
+          "passed": false,
+          "type": "prompt_injection",
+          "company": "Harborview Compliance",
+          "month": null,
+          "metric": null,
+          "n_flags": 0
+        },
+        "E4": {
+          "passed": false,
+          "type": "duplicate_submission",
+          "company": "Northpass Health IT",
+          "month": "2026-09",
+          "metric": "churned_arr",
+          "n_flags": 0
+        },
+        "E5": {
+          "passed": false,
+          "type": "continuity_break",
+          "company": "Cobalt Facilities",
+          "month": "2026-04",
+          "metric": "beginning_arr",
+          "n_flags": 0
+        },
+        "E6": {
+          "passed": false,
+          "type": "impossible_value",
+          "company": "Verity Legal Tech",
+          "month": "2026-06",
+          "metric": "gross_margin_pct",
+          "n_flags": 0
+        },
+        "E7": {
+          "passed": false,
+          "type": "unknown_label",
+          "company": "Verity Legal Tech",
+          "month": null,
+          "metric": "new_arr",
+          "n_flags": 0
+        }
+      }
+    },
+    "false_flags": {
+      "passed": false,
+      "problems": [
+        "pipeline did not return a result"
+      ]
+    },
+    "values": {
+      "passed": false,
+      "problems": [
+        "pipeline did not return a result"
+      ]
+    },
+    "traceability": {
+      "passed": false,
+      "problems": [
+        "pipeline did not return a result"
+      ]
+    },
+    "duplicates": {
+      "passed": false,
+      "problems": [
+        "pipeline did not return a result"
+      ]
+    },
+    "injection": {
+      "passed": false,
+      "problems": [
+        "pipeline did not return a result"
+      ]
+    },
+    "overall_pass": false,
+    "pipeline_error": "NotImplementedError: "
+  }
+}

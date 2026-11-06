@@ -1,0 +1,8 @@
+pandas
+openpyxl
+pytest
+pyyaml
+rapidfuzz
+anthropic
+streamlit
+python-docx
