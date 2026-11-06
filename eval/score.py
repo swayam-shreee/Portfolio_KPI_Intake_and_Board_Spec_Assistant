@@ -345,12 +345,12 @@ def metric_tol(metric: str) -> float:
     return METRIC_TOL_K if metric == "arr_per_employee" else METRIC_TOL_PCT
 
 
-def metrics_sanity(gt: pd.DataFrame) -> dict:
-    """Portfolio-level facts, asserted on the checker's own unmasked expected values (this
-    validates the eval formulas; masking is what forces the pipeline's blocked cells to None)."""
+def checker_selftest(gt: pd.DataFrame) -> dict:
+    """Checker self-test, NOT a pipeline check: portfolio-level facts asserted on the checker's
+    own unmasked expected values, to validate the eval formulas against ground truth."""
     un = ME.expected_unmasked(gt)
-    growth = {e.company: e.accepted[0] for e in un.values() if e.metric == "growth_12m"}
-    nrr = {e.company: e.accepted[0] for e in un.values() if e.metric == "nrr_12m"}
+    growth = {e.company: e.value for e in un.values() if e.metric == "growth_12m"}
+    nrr = {e.company: e.value for e in un.values() if e.metric == "nrr_12m"}
     top, low = max(growth, key=growth.get), min(nrr, key=nrr.get)
     problems = []
     if top != "Verity Legal Tech":
@@ -364,11 +364,45 @@ def metrics_sanity(gt: pd.DataFrame) -> dict:
             "lowest_nrr_12m": (low, round(nrr[low], 2))}
 
 
+_BLOCKED_BY_NEW_ARR = re.compile(r"new_arr|unknown[_ ]label", re.I)
+
+
+def pipeline_assertions(metrics: pd.DataFrame) -> dict:
+    """Assertions on the pipeline's own output (independent of the expected-value comparison):
+    Verity's growth_12m / nrr_12m are None and blocked by the unknown-label item (new_arr);
+    among non-None nrr_12m values Cobalt is the lowest and is below 100%."""
+    by_id = {r.metric_id: r for r in metrics.drop_duplicates("metric_id").itertuples(index=False)}
+    problems = []
+    for mid in ("verity.12m.growth_12m", "verity.12m.nrr_12m"):
+        r = by_id.get(mid)
+        if r is None:
+            problems.append(f"{mid} is missing")
+            continue
+        if not pd.isna(r.value):
+            problems.append(f"{mid} must be None, got {r.value!r}")
+        reason = r.blocked_reason if isinstance(r.blocked_reason, str) else ""
+        if not _BLOCKED_BY_NEW_ARR.search(reason):
+            problems.append(f"{mid} blocked_reason must reference new_arr / the unknown-label "
+                            f"item, got {r.blocked_reason!r}")
+    nrr = {r.company: float(r.value) for r in by_id.values()
+           if r.metric_id.rsplit(".", 1)[-1] == "nrr_12m" and not pd.isna(r.value)}
+    if "Cobalt Facilities" not in nrr:
+        problems.append("Cobalt Facilities has no non-None nrr_12m")
+    else:
+        low = min(nrr, key=nrr.get)
+        if low != "Cobalt Facilities":
+            problems.append(f"lowest non-None nrr_12m is {low} ({nrr[low]:.2f}), expected Cobalt")
+        if nrr["Cobalt Facilities"] >= 100:
+            problems.append(f"Cobalt nrr_12m {nrr['Cobalt Facilities']:.2f} is not below 100")
+    return {"passed": not problems, "problems": problems,
+            "lowest_non_none_nrr_12m": min(nrr.items(), key=lambda kv: kv[1]) if nrr else None}
+
+
 def section_metrics(metrics: pd.DataFrame, table: pd.DataFrame, gt: pd.DataFrame,
                     key: list[dict]) -> dict:
-    sanity = metrics_sanity(gt)
+    selftest = checker_selftest(gt)
     if tuple(metrics.columns) != METRIC_COLUMNS:
-        return {"passed": False, "sanity": sanity,
+        return {"passed": False, "selftest": selftest,
                 "problems": [f"columns {list(metrics.columns)} != {list(METRIC_COLUMNS)}"]}
     exp = ME.expected_all(gt, key)
     problems = []
@@ -398,7 +432,7 @@ def section_metrics(metrics: pd.DataFrame, table: pd.DataFrame, gt: pd.DataFrame
                 whys.append("blocked metric has no blocked_reason")
         elif not has_value:
             whys.append("None where a value is expected")
-        elif not any(abs(float(r.value) - a) <= metric_tol(e.metric) + 1e-9 for a in e.accepted):
+        elif abs(float(r.value) - e.value) > metric_tol(e.metric) + 1e-9:
             whys.append("wrong value")
         if has_value:
             ins = r.inputs
@@ -409,13 +443,16 @@ def section_metrics(metrics: pd.DataFrame, table: pd.DataFrame, gt: pd.DataFrame
                 if absent:
                     whys.append(f"inputs not in table: {absent[:3]}")
         if whys:
-            mism.append({"metric_id": mid, "expected": list(e.accepted) or None,
+            mism.append({"metric_id": mid, "expected": e.value,
                          "got": None if not has_value else float(r.value), "why": "; ".join(whys)})
         else:
             ok += 1
-    if not sanity["passed"]:
-        problems += sanity["problems"]
-    return {"passed": not problems and not mism, "problems": problems, "sanity": sanity,
+    asserts = pipeline_assertions(metrics)
+    problems += asserts["problems"]
+    if not selftest["passed"]:
+        problems += [f"checker self-test: {x}" for x in selftest["problems"]]
+    return {"passed": not problems and not mism, "problems": problems,
+            "assertions": asserts, "selftest": selftest,
             "n_expected": len(exp), "n_correct": ok, "n_mismatches": len(mism),
             "mismatches": mism[:20]}
 
@@ -509,10 +546,14 @@ def format_report(s: dict) -> str:
             L.append(f"    {x}")
         for x in m.get("mismatches", [])[:10]:
             L.append(f"    {x['metric_id']}: expected {x['expected']} got {x['got']} ({x['why']})")
-        sa = m.get("sanity")
-        if sa:
-            L.append(f"    sanity [{'PASS' if sa['passed'] else 'FAIL'}] highest growth_12m "
-                     f"{sa['highest_growth_12m']}, lowest nrr_12m {sa['lowest_nrr_12m']}")
+        a = m.get("assertions")
+        if a:
+            L.append(f"    pipeline assertions [{'PASS' if a['passed'] else 'FAIL'}] lowest non-None "
+                     f"nrr_12m {a['lowest_non_none_nrr_12m']}")
+        st = m.get("selftest")
+        if st:
+            L.append(f"    checker self-test, unmasked ground truth [{'PASS' if st['passed'] else 'FAIL'}] "
+                     f"highest growth_12m {st['highest_growth_12m']}, lowest nrr_12m {st['lowest_nrr_12m']}")
     L += ["=" * 64, f"OVERALL: {'PASS' if s['overall_pass'] else 'FAIL'}"]
     return "\n".join(L)
 

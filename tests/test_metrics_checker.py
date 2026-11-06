@@ -41,7 +41,7 @@ def good(expected, table):
             rows.append((e.company, e.month, mid, None, [],
                          "blocked by review item: " + ", ".join(f"{c} {m} {k}" for c, m, k in e.blockers)))
         else:
-            rows.append((e.company, e.month, mid, e.accepted[0], [src[k] for k in e.inputs], None))
+            rows.append((e.company, e.month, mid, e.value, [src[k] for k in e.inputs], None))
     return pd.DataFrame(rows, columns=list(METRIC_COLUMNS))
 
 
@@ -58,7 +58,7 @@ def test_checker_passes_on_ground_truth_metrics(good, table, gt, key):
     res = check(good, table, gt, key)
     assert res["passed"], res
     assert res["n_correct"] == res["n_expected"] == 250
-    assert res["sanity"]["passed"]
+    assert res["assertions"]["passed"] and res["selftest"]["passed"]
 
 
 def test_wrong_value_fails(good, table, gt, key):
@@ -119,29 +119,129 @@ def test_tolerances(good, table, gt, key):
     assert check(m, table, gt, key)["passed"]
 
 
-def test_cobalt_break_carry_is_accepted(expected):
-    # the file carries the +150 break forward, so either variant of ending ARR is acceptable
-    e = expected["cobalt.12m.growth_12m"]
-    assert len(e.accepted) == 2 and abs(e.accepted[0] - e.accepted[1]) > 0.1
+def test_cobalt_expects_only_the_carry_forward_variant(expected, good, table, gt, key):
+    # Cobalt's files report the +150 break from April on; that is the only accepted figure
+    reported = (19618 + 150) / 16500 * 100 - 100
+    true = 19618 / 16500 * 100 - 100
+    assert expected["cobalt.12m.growth_12m"].value == pytest.approx(reported)
+    assert expected["cobalt.2026-05.churn_rate"].value == pytest.approx(155 / (18284 + 150) * 100)
+    m = good.copy()
+    m.loc[row(m, "cobalt.12m.growth_12m"), "value"] = true  # the true figure is now rejected
+    res = check(m, table, gt, key)
+    assert not res["passed"]
+    assert [x["metric_id"] for x in res["mismatches"]] == ["cobalt.12m.growth_12m"]
+
+
+# Every flagged-input case. Rule (see pipeline.contract.compute_metrics): a flagged DERIVED value
+# counts as absent and is back-solved from that month's components; a flagged REPORTED value
+# blocks every metric that uses it.
+FLAGGED_INPUT_CASES = [
+    # (metric_id, why, expected value, blocking cell)
+    ("harborview.2025-10.churn_rate", "derived beginning, no prior month: back-solved",
+     80 / 11800 * 100, None),
+    ("harborview.12m.growth_12m", "derived Oct-25 beginning (start): back-solved",
+     (14180 / 11800 - 1) * 100, None),
+    ("harborview.2026-04.churn_rate", "derived beginning, prior month (Mar) missing: back-solved",
+     60 / 12950 * 100, None),
+    ("harborview.2026-08.churn_rate", "derived beginning, prior ending (Jul, E2) flagged: back-solved",
+     60 / 13830 * 100, None),
+    ("verity.2025-10.churn_rate", "derived beginning, back-solve needs flagged reported new_arr: blocked",
+     None, ("Verity Legal Tech", "2025-10", "new_arr")),
+    ("cobalt.2026-04.churn_rate", "reported beginning_arr flagged (E5): blocked, never back-solved",
+     None, ("Cobalt Facilities", "2026-04", "beginning_arr")),
+]
+
+
+@pytest.mark.parametrize("mid,why,value,blocker", FLAGGED_INPUT_CASES, ids=[c[0] for c in FLAGGED_INPUT_CASES])
+def test_flagged_derived_vs_reported(expected, mid, why, value, blocker):
+    e = expected[mid]
+    if value is None:
+        assert e.blocked and blocker in e.blockers, why
+    else:
+        assert not e.blocked and e.value == pytest.approx(value), why
+        assert not e.blockers
+
+
+def test_back_solve_cites_components_not_the_flagged_prior_ending(expected):
+    cells = expected["harborview.2026-08.churn_rate"].inputs
+    assert ("Harborview Compliance", "2026-07", "ending_arr") not in cells
+    assert {k for _, _, k in cells} == {"churned_arr", "ending_arr", "new_arr", "expansion_arr",
+                                        "contraction_arr"}
+
+
+def test_blocked_reason_names_the_blocker(good):
+    reason = good.set_index("metric_id").blocked_reason
+    assert "new_arr" in reason["verity.12m.growth_12m"]
+    assert "beginning_arr" in reason["cobalt.2026-04.churn_rate"]
 
 
 def test_formula_anchors(expected, gt):
-    assert expected["cobalt.12m.nrr_12m"].accepted[0] == pytest.approx(15569 / 16500 * 100)
-    assert expected["ridgeline.12m.growth_12m"].accepted[0] == pytest.approx((30407 / 24000 - 1) * 100)
-    assert expected["verity.12m.growth_12m"].blocked  # Oct-25 beginning needs flagged new_arr
-    assert ME.expected_unmasked(gt)["verity.12m.growth_12m"].accepted[0] == pytest.approx((13629 / 9800 - 1) * 100)
-    assert expected["harborview.12m.nrr_12m"].blocked  # March missing
-    assert not expected["harborview.12m.growth_12m"].blocked  # Oct beginning back-solved
-    assert expected["cobalt.2026-04.churn_rate"].blocked  # flagged beginning_arr, never back-solved
-    assert expected["harborview.2026-04.churn_rate"].accepted[0] == pytest.approx(60 / 12950 * 100)
+    assert expected["cobalt.12m.nrr_12m"].value == pytest.approx(15569 / 16500 * 100)
+    assert expected["ridgeline.12m.growth_12m"].value == pytest.approx((30407 / 24000 - 1) * 100)
+    assert expected["harborview.12m.nrr_12m"].blocked  # March missing (E1), reported
+    assert expected["verity.12m.growth_12m"].blocked and expected["verity.12m.nrr_12m"].blocked
+    assert expected["ridgeline.2026-02.arr_per_employee"].value == pytest.approx(26552 / 177)  # $K
     assert len(expected) == 250
 
 
-def test_sanity_fails_if_ground_truth_changes(gt):
+# ---------------------------------------------------------------- pipeline-output assertions
+def test_pipeline_assertions_pass_on_good_metrics(good):
+    a = S.pipeline_assertions(good)
+    assert a["passed"], a
+    assert a["lowest_non_none_nrr_12m"][0] == "Cobalt Facilities" and a["lowest_non_none_nrr_12m"][1] < 100
+
+
+@pytest.mark.parametrize("mid", ["verity.12m.growth_12m", "verity.12m.nrr_12m"])
+def test_verity_reason_must_reference_new_arr(good, table, gt, key, mid):
+    m = good.copy()
+    m.loc[row(m, mid), "blocked_reason"] = "blocked by a review item"
+    assert not S.pipeline_assertions(m)["passed"]
+    assert not check(m, table, gt, key)["passed"]
+    m.loc[row(m, mid), "blocked_reason"] = "Net New Logos ARR is an unknown_label under review"
+    assert S.pipeline_assertions(m)["passed"]
+
+
+def test_verity_value_must_be_none(good):
+    m = good.copy()
+    m.loc[row(m, "verity.12m.growth_12m"), "value"] = 39.07
+    assert not S.pipeline_assertions(m)["passed"]
+
+
+def test_cobalt_must_have_lowest_non_none_nrr(good):
+    m = good.copy()
+    m.loc[row(m, "ridgeline.12m.nrr_12m"), "value"] = 50.0
+    a = S.pipeline_assertions(m)
+    assert not a["passed"] and "lowest non-None nrr_12m is Ridgeline" in a["problems"][0]
+
+
+def test_cobalt_nrr_must_be_below_100(good):
+    m = good.copy()
+    m.loc[row(m, "cobalt.12m.nrr_12m"), "value"] = 101.0
+    for other in ("ridgeline", "northpass"):
+        m.loc[row(m, f"{other}.12m.nrr_12m"), "value"] = 105.0
+    a = S.pipeline_assertions(m)
+    assert not a["passed"] and any("not below 100" in x for x in a["problems"])
+
+
+def test_cobalt_nrr_none_fails(good):
+    m = good.copy()
+    m.loc[row(m, "cobalt.12m.nrr_12m"), "value"] = None
+    assert not S.pipeline_assertions(m)["passed"]
+
+
+# ---------------------------------------------------------------- checker self-tests
+def test_selftest_unmasked_ground_truth_facts(gt):
+    st = S.checker_selftest(gt)
+    assert st["passed"]
+    assert st["highest_growth_12m"][0] == "Verity Legal Tech"
+    assert st["highest_growth_12m"][1] == pytest.approx(39.07, abs=0.01)
+    assert st["lowest_nrr_12m"][0] == "Cobalt Facilities" and st["lowest_nrr_12m"][1] < 100
+
+
+def test_selftest_fails_if_ground_truth_changes(gt):
     g = gt.copy()
-    g.loc[(g.company == "Cobalt Facilities") & (g.month == "2026-05"), "churned_arr"] = 0
     g.loc[(g.company == "Cobalt Facilities"), "expansion_arr"] += 500
-    assert not S.metrics_sanity(g)["passed"]
+    assert not S.checker_selftest(g)["passed"]
 
 
 def test_stub_compute_metrics_fails_stage4(table):

@@ -3,11 +3,21 @@
 Computed straight from the ground-truth frame and the answer key. Deliberately shares no code
 with ``pipeline`` (formulas are re-implemented here from the agreed definitions).
 
-Ratio metrics are in percent; ``arr_per_employee`` is in $K.
+Ratio metrics are in percent; ``arr_per_employee`` is in $K of ARR per employee.
+
+Derived vs reported inputs
+* A REPORTED value is a cell the company submitted. If it is flagged, every metric that uses it
+  is blocked (value None). It is never replaced by anything else.
+* A DERIVED value is one the pipeline builds itself: beginning_arr for files with no beginning
+  row (Harborview, Verity) is the prior month's ending ARR. If it is flagged, or its source
+  (the prior month's ending ARR) is flagged or missing, it counts as ABSENT and is back-solved
+  from that month's components: ending - new - expansion + contraction + churned. The back-solve
+  is itself blocked only if one of those reported components is flagged.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import pandas as pd
 
@@ -25,13 +35,13 @@ class Expected:
     company: str
     month: str          # YYYY-MM or "12m"
     metric: str
-    accepted: tuple     # accepted values; empty when blocked
-    inputs: tuple       # ground-truth cells used
-    blockers: tuple     # masked cells that block it
+    value: Optional[float]  # None when blocked
+    inputs: tuple           # ground-truth cells used
+    blockers: tuple         # flagged reported cells that block it
 
     @property
     def blocked(self) -> bool:
-        return not self.accepted
+        return self.value is None
 
 
 def slug(company: str) -> str:
@@ -81,15 +91,16 @@ class _Calc:
         return self.vals[(c, m, metric)], ((c, m, metric),), ()
 
     def beginning(self, c, m):
-        if self.mask(c, m, "beginning_arr"):
-            return None, (), ((c, m, "beginning_arr"),)
         if c not in NO_BEGINNING_ROW:
+            # REPORTED: flagged means blocked, never back-solved (Cobalt 2026-04, E5)
             return self.get(c, m, "beginning_arr")
+        # DERIVED: prior month's ending ARR, unless flagged or its source is flagged/missing
         months = self.months[c]
         i = months.index(m)
-        if i > 0 and not self.mask(c, months[i - 1], "ending_arr"):
+        if i > 0 and not self.mask(c, m, "beginning_arr") \
+                and not self.mask(c, months[i - 1], "ending_arr"):
             return self.get(c, months[i - 1], "ending_arr")
-        # back-solve from this month's components
+        # absent: back-solve from this month's reported components
         parts = [self.get(c, m, k) for k in
                  ("ending_arr", "new_arr", "expansion_arr", "contraction_arr", "churned_arr")]
         return _combine(parts, lambda end, new, exp, con, chu: end - new - exp + con + chu)
@@ -136,9 +147,10 @@ class _Calc:
         return out
 
 
-def _cobalt_variant(gt: pd.DataFrame, key: list[dict]) -> pd.DataFrame:
-    """Ground truth as the file reports it after the continuity break: the delta is carried
-    into ending ARR from the break month on, and into beginning ARR after the break month."""
+def _as_reported(gt: pd.DataFrame, key: list[dict]) -> pd.DataFrame:
+    """Ground truth as the files report it. Cobalt's continuity break (E5) is carried forward:
+    the delta is in ending ARR from the break month on and in beginning ARR after the break
+    month, so every unflagged Cobalt metric is expected on those reported figures."""
     e = next(e for e in key if e["type"] == "continuity_break")
     delta = e["reported_value_k"] - e["true_value_k"]
     alt = gt.copy()
@@ -150,19 +162,11 @@ def _cobalt_variant(gt: pd.DataFrame, key: list[dict]) -> pd.DataFrame:
 
 
 def expected_all(gt: pd.DataFrame, key: list[dict]) -> dict:
-    """metric_id -> Expected, masking cells flagged in the answer key. Values from the true
-    ground truth and from the break-carrying variant are both accepted."""
-    mask = _Mask(masked_cells(key))
-    base = _Calc(gt, mask).run()
-    alt = _Calc(_cobalt_variant(gt, key), mask).run()
-    out = {}
-    for mid, (c, m, metric, val, inputs, blockers) in base.items():
-        accepted = () if val is None else tuple(dict.fromkeys([val, alt[mid][3]]))
-        out[mid] = Expected(c, m, metric, accepted, inputs, blockers)
-    return out
+    """metric_id -> Expected on the figures as reported, masking cells flagged in the key."""
+    run = _Calc(_as_reported(gt, key), _Mask(masked_cells(key))).run()
+    return {mid: Expected(*t) for mid, t in run.items()}
 
 
 def expected_unmasked(gt: pd.DataFrame) -> dict:
-    """metric_id -> Expected with nothing masked (used for the sanity assertions)."""
-    return {mid: Expected(c, m, metric, (val,), inputs, blockers)
-            for mid, (c, m, metric, val, inputs, blockers) in _Calc(gt, _Mask([])).run().items()}
+    """metric_id -> Expected on true ground truth with nothing masked (checker self-tests only)."""
+    return {mid: Expected(*t) for mid, t in _Calc(gt, _Mask([])).run().items()}
