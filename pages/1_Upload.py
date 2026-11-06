@@ -20,10 +20,13 @@ if st.button("Load sample data", key="load_sample"):
 result = st.session_state.get("upload_result")
 if result is not None:
     st.subheader("Upload result")
-    for label, names in (("Saved", result.saved), ("Skipped", result.skipped)):
-        for name in names:
-            st.text(f"{label}: {name}")
+    for name in result.saved:
+        st.text(f"Saved: {name}")
+    for name in result.skipped:
+        st.text(f"Skipped: {name} ({uploads.SKIPPED_TEXT})")
     for name, reason in result.refused:
-        st.text(f"Refused: {name} ({reason})")
+        st.text(f"Refused: {name} ({uploads.REFUSED_TEXT.get(reason, reason)})")
+    if result.skipped and not result.saved and not result.refused:
+        st.text("No new files; the saved portfolio is loaded.")
 if st.session_state.get("portfolio") is not None:
     st.text("A portfolio is loaded. Open the overview, review queue or board draft pages.")
