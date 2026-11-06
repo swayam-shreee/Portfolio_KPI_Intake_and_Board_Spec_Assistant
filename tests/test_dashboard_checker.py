@@ -1110,9 +1110,10 @@ def test_20a_stale_after_confirm(cfg, port):
 def test_20b_stale_after_upload(cfg):
     from pipeline import review
     fake = FakeClient(COBALT_ONLY)
-    at = make_app("pages/1_Upload.py", cfg, client=fake)
+    at = make_app("app.py", cfg, client=fake)
     at.run()
     no_exception(at)
+    open_page(at, "pages/1_Upload.py")
     widget(at, "file_uploader", "uploads").set_value([(n, b, mime_of(n)) for n, b in files_of(RAW_R)])
     at.run()
     no_exception(at)

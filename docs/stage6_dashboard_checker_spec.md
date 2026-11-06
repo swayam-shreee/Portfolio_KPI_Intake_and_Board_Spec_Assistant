@@ -285,6 +285,7 @@ The checker pins these. Where they differ from the test text above, they take pr
 17. **Test 19, double approval.** After one Approve click, `approve` is disabled. `approvals.jsonl` has exactly one `approved` line after a further rerun.
 18. **Test 21, export args.** The captured call has `file_name == "board_draft.docx"` and `key == "export"`.
 19. **Test 10, timestamp.** `ts` must be offset-aware UTC (`datetime.now(timezone.utc).isoformat()`). A naive timestamp fails.
+20. **Test 20b, start page.** `AppTest.switch_page` resolves paths relative to the directory of the starting script, so an AppTest started from `pages/1_Upload.py` would look for `pages/pages/…`. 20b therefore starts from `app.py` (as 20a does) and reaches the pages with `switch_page("pages/1_Upload.py")` and `switch_page("pages/3_Board_draft.py")`. All assertions are unchanged.
 
 ## Audit mutations (fresh session, after the loop)
 
