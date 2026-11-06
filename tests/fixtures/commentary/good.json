@@ -1,0 +1,10 @@
+{"sections": [
+  {"company": "portfolio", "paragraphs": [
+    "Across the portfolio, Ridgeline led on annual growth at {ridgeline.12m.growth_12m}, while Northpass held net retention at {northpass.12m.nrr_12m}.",
+    "Verity's gross margin in September was {verity.2026-09.gross_margin}, steady with recent months."
+  ]},
+  {"company": "cobalt", "paragraphs": [
+    "Cobalt's net retention fell short of full retention at {cobalt.12m.nrr_12m}, and gross retention was {cobalt.12m.grr_12m}, so existing customers are shrinking in value. This deserves a close look from the board.",
+    "In September, Cobalt's monthly ARR growth was {cobalt.2026-09.mom_growth} and each employee supported {cobalt.2026-09.arr_per_employee} of ARR."
+  ]}
+]}

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(tests/test_commentary_checker.py)",
+      "Edit(tests/fixtures/commentary/**)",
+      "Edit(eval/**)",
+      "Edit(pipeline/contract.py)",
+      "Edit(tests/test_scorer.py)",
+      "Edit(tests/test_metrics_checker.py)"
+    ]
+  }
+}
