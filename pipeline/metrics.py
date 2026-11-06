@@ -40,10 +40,11 @@ class _Calc:
                       for r in table.itertuples()}
         self.months = sorted(table["month"].unique())          # the reporting period
         self.companies = list(dict.fromkeys(table["company"]))
-        # A company's beginning_arr is DERIVED when its rows cite an ending_arr cell.
-        ending = {(c, v[1]) for (c, _, k), v in self.cells.items() if k == "ending_arr"}
-        self.derived = {c for (c, _, k), v in self.cells.items()
-                        if k == "beginning_arr" and (c, v[1]) in ending}
+        # beginning_arr is DERIVED (not reported) for a company that submitted no beginning_arr
+        # row of its own; rows built by ingest.derive_beginning carry derived=True.
+        begin = table[table["metric"] == "beginning_arr"]
+        reported = set(begin.loc[~begin["derived"].astype(bool), "company"])
+        self.derived = {c for c in self.companies if c not in reported}
 
     def _blocker(self, c: str, m: str, metric: str) -> str:
         for it in self.queue:

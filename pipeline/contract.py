@@ -40,7 +40,9 @@ COMPANIES = (
     "Cobalt Facilities", "Verity Legal Tech",
 )
 
-TABLE_COLUMNS = ("company", "month", "metric", "value_usd_k", "source_file", "source_cell")
+# ``derived`` is True only for beginning_arr rows that ingest.derive_beginning built from the prior
+# month's ending ARR; every cell a company actually submitted is False.
+TABLE_COLUMNS = ("company", "month", "metric", "value_usd_k", "source_file", "source_cell", "derived")
 
 METRIC_NAMES = (
     "mom_growth", "growth_12m", "nrr_12m", "grr_12m", "churn_rate", "gross_margin",

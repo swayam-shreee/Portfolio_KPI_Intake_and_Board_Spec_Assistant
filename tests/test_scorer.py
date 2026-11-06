@@ -144,7 +144,7 @@ def perfect(located, key, gt):
     for (company, month, metric), (f, ref, raw, src_metric) in located.items():
         if (company, month, metric) in EXCLUDED:
             continue
-        rows.append((company, month, metric, S.convert(company, src_metric, raw), f, ref))
+        rows.append((company, month, metric, S.convert(company, src_metric, raw), f, ref, False))
     table = pd.DataFrame(rows, columns=list(TABLE_COLUMNS))
     return RunResult(table, make_flags(key))
 
