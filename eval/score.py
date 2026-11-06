@@ -1,9 +1,11 @@
 """End-to-end scorer. The only code allowed to read eval/ (answer key, ground truth).
 
-Usage:  python eval/score.py        (exit 0 only if every section passes)
+Usage:  python eval/score.py [--stage {3,4}]   (exit 0 only if every section passes)
+        stage 3 (default): table + review queue; stage 4 adds the metrics checker.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import datetime as dt
 import json
@@ -20,7 +22,10 @@ import pandas as pd  # noqa: E402
 from openpyxl import load_workbook  # noqa: E402
 from openpyxl.utils import column_index_from_string  # noqa: E402
 
-from pipeline.contract import COMPANIES, ERROR_TYPES, METRICS, TABLE_COLUMNS  # noqa: E402
+from eval import metrics_expected as ME  # noqa: E402
+from pipeline.contract import (  # noqa: E402
+    COMPANIES, ERROR_TYPES, METRIC_COLUMNS, METRICS, TABLE_COLUMNS, compute_metrics,
+)
 
 EVAL_DIR = ROOT / "eval"
 RAW_DIR = ROOT / "data" / "raw"
@@ -331,6 +336,107 @@ def section_injection(table: pd.DataFrame, queue: list, raw_dir: Path) -> dict:
     return {"passed": not problems, "problems": problems}
 
 
+# --------------------------------------------------------------------------- stage 4: metrics
+METRIC_TOL_PCT = 0.1   # percentage points (ratio metrics are in percent)
+METRIC_TOL_K = 1.0     # $K (arr_per_employee)
+
+
+def metric_tol(metric: str) -> float:
+    return METRIC_TOL_K if metric == "arr_per_employee" else METRIC_TOL_PCT
+
+
+def metrics_sanity(gt: pd.DataFrame) -> dict:
+    """Portfolio-level facts, asserted on the checker's own unmasked expected values (this
+    validates the eval formulas; masking is what forces the pipeline's blocked cells to None)."""
+    un = ME.expected_unmasked(gt)
+    growth = {e.company: e.accepted[0] for e in un.values() if e.metric == "growth_12m"}
+    nrr = {e.company: e.accepted[0] for e in un.values() if e.metric == "nrr_12m"}
+    top, low = max(growth, key=growth.get), min(nrr, key=nrr.get)
+    problems = []
+    if top != "Verity Legal Tech":
+        problems.append(f"highest growth_12m is {top}, expected Verity Legal Tech")
+    if low != "Cobalt Facilities":
+        problems.append(f"lowest nrr_12m is {low}, expected Cobalt Facilities")
+    if nrr[low] >= 100:
+        problems.append(f"lowest nrr_12m {nrr[low]:.2f} is not below 100")
+    return {"passed": not problems, "problems": problems,
+            "highest_growth_12m": (top, round(growth[top], 2)),
+            "lowest_nrr_12m": (low, round(nrr[low], 2))}
+
+
+def section_metrics(metrics: pd.DataFrame, table: pd.DataFrame, gt: pd.DataFrame,
+                    key: list[dict]) -> dict:
+    sanity = metrics_sanity(gt)
+    if tuple(metrics.columns) != METRIC_COLUMNS:
+        return {"passed": False, "sanity": sanity,
+                "problems": [f"columns {list(metrics.columns)} != {list(METRIC_COLUMNS)}"]}
+    exp = ME.expected_all(gt, key)
+    problems = []
+    dup = metrics["metric_id"][metrics["metric_id"].duplicated()]
+    if len(dup):
+        problems.append(f"duplicate metric_ids: {sorted(set(dup))[:5]}")
+    got = {r.metric_id: r for r in metrics.drop_duplicates("metric_id").itertuples(index=False)}
+    if set(exp) - set(got):
+        problems.append(f"{len(set(exp) - set(got))} expected metric_ids missing, "
+                        f"e.g. {sorted(set(exp) - set(got))[:3]}")
+    if set(got) - set(exp):
+        problems.append(f"{len(set(got) - set(exp))} unexpected metric_ids, "
+                        f"e.g. {sorted(set(got) - set(exp))[:3]}")
+    pairs = set(zip(table["source_file"], table["source_cell"]))
+    mism, ok = [], 0
+    for mid, e in exp.items():
+        r = got.get(mid)
+        if r is None:
+            continue
+        whys = []
+        has_value = not pd.isna(r.value)
+        if e.blocked:
+            if has_value:
+                whys.append(f"must be None (blocked by {list(e.blockers)}), got {r.value!r}")
+            reason = r.blocked_reason
+            if not isinstance(reason, str) or not reason.strip():
+                whys.append("blocked metric has no blocked_reason")
+        elif not has_value:
+            whys.append("None where a value is expected")
+        elif not any(abs(float(r.value) - a) <= metric_tol(e.metric) + 1e-9 for a in e.accepted):
+            whys.append("wrong value")
+        if has_value:
+            ins = r.inputs
+            if not isinstance(ins, (list, tuple)) or not len(ins):
+                whys.append("non-None metric has no inputs")
+            else:
+                absent = [tuple(i) for i in ins if tuple(i) not in pairs]
+                if absent:
+                    whys.append(f"inputs not in table: {absent[:3]}")
+        if whys:
+            mism.append({"metric_id": mid, "expected": list(e.accepted) or None,
+                         "got": None if not has_value else float(r.value), "why": "; ".join(whys)})
+        else:
+            ok += 1
+    if not sanity["passed"]:
+        problems += sanity["problems"]
+    return {"passed": not problems and not mism, "problems": problems, "sanity": sanity,
+            "n_expected": len(exp), "n_correct": ok, "n_mismatches": len(mism),
+            "mismatches": mism[:20]}
+
+
+def score_metrics_stage(result, gt: pd.DataFrame | None = None, key: list[dict] | None = None) -> dict:
+    if result is None:
+        return {"passed": False, "problems": ["pipeline did not return a result"]}
+    key = key if key is not None else load_answer_key()
+    gt = gt if gt is not None else load_ground_truth()
+    try:
+        metrics = compute_metrics(result.table, list(result.review_queue))
+    except BaseException as ex:  # noqa: BLE001 - includes NotImplementedError
+        if isinstance(ex, KeyboardInterrupt):
+            raise
+        return {"passed": False, "problems": [f"compute_metrics: {type(ex).__name__}: {ex}"],
+                "metrics_error": f"{type(ex).__name__}: {ex}"}
+    if not isinstance(metrics, pd.DataFrame):
+        return {"passed": False, "problems": ["compute_metrics did not return a DataFrame"]}
+    return section_metrics(metrics, result.table, gt, key)
+
+
 # --------------------------------------------------------------------------- orchestration
 SECTIONS = ("schema", "recall", "false_flags", "values", "traceability", "duplicates", "injection")
 
@@ -395,6 +501,18 @@ def format_report(s: dict) -> str:
         L.append(f"[{'PASS' if sec['passed'] else 'FAIL'}] {name}  {extra}")
         for x in sec.get("failures", [])[:10]:
             L.append(f"    {x}")
+    m = s.get("metrics")
+    if m is not None:
+        extra = f"{m['n_correct']}/{m['n_expected']} metrics correct" if "n_expected" in m else ""
+        L.append(f"[{'PASS' if m['passed'] else 'FAIL'}] metrics  {extra}")
+        for x in m.get("problems", [])[:10]:
+            L.append(f"    {x}")
+        for x in m.get("mismatches", [])[:10]:
+            L.append(f"    {x['metric_id']}: expected {x['expected']} got {x['got']} ({x['why']})")
+        sa = m.get("sanity")
+        if sa:
+            L.append(f"    sanity [{'PASS' if sa['passed'] else 'FAIL'}] highest growth_12m "
+                     f"{sa['highest_growth_12m']}, lowest nrr_12m {sa['lowest_nrr_12m']}")
     L += ["=" * 64, f"OVERALL: {'PASS' if s['overall_pass'] else 'FAIL'}"]
     return "\n".join(L)
 
@@ -407,14 +525,18 @@ def _git_sha() -> str | None:
         return None
 
 
-def summarize(s: dict) -> dict:
+def summarize(s: dict, stage: int = 3) -> dict:
     """Compact per-iteration record for tracking progress across loop iterations."""
+    sections = {n: s[n]["passed"] for n in SECTIONS}
+    if "metrics" in s:
+        sections["metrics"] = s["metrics"]["passed"]
     return {
+        "stage": stage,
         "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "git_sha": _git_sha(),
         "overall_pass": s["overall_pass"],
         "pipeline_error": s["pipeline_error"],
-        "sections": {n: s[n]["passed"] for n in SECTIONS},
+        "sections": sections,
         "recall": f"{s['recall']['hit']}/{s['recall']['total']}",
         "recall_failed": [k for k, v in s["recall"]["per_error"].items() if not v["passed"]],
         "false_flags": s["false_flags"].get("n_false"),
@@ -422,10 +544,15 @@ def summarize(s: dict) -> dict:
         "value_pct": s["values"].get("pct"),
         "value_mismatches": s["values"].get("n_mismatches"),
         "traceability_failures": s["traceability"].get("n_failures"),
+        "metric_mismatches": s["metrics"].get("n_mismatches") if "metrics" in s else None,
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Score the KPI pipeline against the answer key.")
+    ap.add_argument("--stage", type=int, choices=(3, 4), default=3,
+                    help="3: table + review queue (default); 4: also check compute_metrics")
+    stage = ap.parse_args([] if argv is None else argv).stage
     paths = sorted(str(p) for p in RAW_DIR.iterdir() if p.suffix.lower() in (".xlsx", ".csv"))
     result, err = None, None
     try:
@@ -436,8 +563,11 @@ def main() -> int:
             raise
         err = f"{type(ex).__name__}: {ex}"
     s = score(result, RAW_DIR, pipeline_error=err)
+    if stage >= 4:
+        s["metrics"] = score_metrics_stage(result)
+        s["overall_pass"] = s["overall_pass"] and s["metrics"]["passed"]
     print(format_report(s))
-    summary = summarize(s)
+    summary = summarize(s, stage)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "last_score.json").write_text(json.dumps({**summary, "detail": s}, indent=2, default=str))
     with open(OUT_DIR / "score_history.jsonl", "a") as f:
@@ -446,4 +576,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
