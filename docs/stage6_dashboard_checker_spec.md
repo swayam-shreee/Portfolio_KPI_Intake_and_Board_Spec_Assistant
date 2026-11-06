@@ -287,6 +287,10 @@ The checker pins these. Where they differ from the test text above, they take pr
 19. **Test 10, timestamp.** `ts` must be offset-aware UTC (`datetime.now(timezone.utc).isoformat()`). A naive timestamp fails.
 20. **Test 20b, start page.** `AppTest.switch_page` resolves paths relative to the directory of the starting script, so an AppTest started from `pages/1_Upload.py` would look for `pages/pages/…`. 20b therefore starts from `app.py` (as 20a does) and reaches the pages with `switch_page("pages/1_Upload.py")` and `switch_page("pages/3_Board_draft.py")`. All assertions are unchanged.
 
+### From the stage 6 audit (test-only fix)
+
+21. **Test 18b, injected rejected draft.** `commentary.py` always returns empty `sections` on rejection, so test 18 can't reach the page's guard (the `draft.status == "rejected"` branch in `pages/3_Board_draft.py`). 18b injects a `Draft` with status `rejected`, attempts 3, `reject_reasons == ["made_up_number"]`, the real open questions, and one non-empty `cobalt` section whose single paragraph (template and rendered text both a distinctive sentence containing S) has no figures. It sets `draft`, `draft_model`, `draft_fingerprint` (the current one) and `approved=False`, then runs the page. It asserts "Draft rejected" is shown, the paragraph string is in no element value or container label anywhere in `main` or `sidebar`, no part of S is in any markdown-family element, and Approve and Export are disabled.
+
 ## Audit mutations (fresh session, after the loop)
 
 | Mutation | Caught by |
@@ -300,7 +304,7 @@ The checker pins these. Where they differ from the test text above, they take pr
 | raw_label "" instead of "—" | 3 |
 | Confirm changes the session only (no decisions.jsonl line) | 14 |
 | `st.cache_data` on load | 24 |
-| A paragraph rendered with `st.markdown` | 17, 22 |
+| A paragraph rendered with `st.markdown` | 17 |
 | `st.subheader(section.company)` (raw) | 17, 22 |
 | A reason in an `st.expander` label | 22 (clarification 13) |
 | No reload from uploads/ on a fresh session | 12c |
@@ -309,8 +313,8 @@ The checker pins these. Where they differ from the test text above, they take pr
 | Approve clickable twice | 19 |
 | Wrong export file name | 21 |
 | Wrong `month` or `metric` in queue rows | 3 |
-| A reason or question rendered with `st.markdown` | 22 |
-| Rejected draft still shows paragraphs | 18 |
+| A reason or question rendered with `st.markdown` | 18, 22 |
+| Rejected draft still shows paragraphs | 18b |
 | Approve enabled on a rejected draft | 18 |
 | Fingerprint omits open items | 11 |
 | Stale check removed | 20a, 20b |
@@ -326,6 +330,8 @@ The checker pins these. Where they differ from the test text above, they take pr
 | Approval line stores paragraph text, or lacks `action` | 10 |
 | "accepted as reported" missing | 6 |
 | Default `Config` used despite the session `cfg` | 25 |
+
+Note: "Default `Config` used despite the session `cfg`" is caught by test 25 only when the whole module runs.
 
 ## Not in this stage
 

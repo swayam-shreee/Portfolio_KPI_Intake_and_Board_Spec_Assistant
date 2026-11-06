@@ -1042,6 +1042,42 @@ def test_18_rejected_draft(cfg, port):
         assert d.proto.disabled
 
 
+def test_18b_rejected_draft_hides_sections(cfg, port):
+    """commentary.py returns empty sections on rejection, so test 18 never reaches the page's guard.
+    Inject a rejected Draft that does carry a paragraph and check the page still hides it."""
+    from dashboard import views
+    from pipeline import review
+    p = review.load(cfg)
+    para_text = "Leaked rejected paragraph 18b: " + S
+    questions = make_draft(p, cfg.state_dir / "q.jsonl").questions
+    draft = commentary_mod.Draft(
+        status="rejected", attempts=3, reject_reasons=["made_up_number"],
+        sections=[commentary_mod.Section("cobalt", [Paragraph(para_text, para_text, [])])],
+        questions=questions)
+    at = make_app("pages/3_Board_draft.py", cfg, client=FakeClient(F1), portfolio=p)
+    at.session_state["draft"] = draft
+    at.session_state["draft_model"] = "fake-model"
+    at.session_state["draft_fingerprint"] = views.fingerprint(p)
+    at.session_state["approved"] = False
+    at.run()
+    no_exception(at)
+    assert any(e.value == "Draft rejected" for e in at.error)
+    assert "made_up_number" in text_values(at), "non-vacuity: the rejected page rendered"
+    blobs = [node_blob(n) for n in leaves(at)]
+    blobs += [node_blob(c) + "\n" + str(getattr(c, "label", "")) for c in containers(at)]
+    assert not any(para_text in b for b in blobs), "the rejected paragraph leaked into the page"
+    markdown_family = {"markdown", "subheader", "header", "title", "caption", "latex",
+                       "error", "warning", "info", "success"}
+    for n in leaves(at):
+        if n.type in markdown_family:
+            blob = node_blob(n)
+            for part in S_PARTS:
+                assert part not in blob, f"{n.type} element contains {part!r}"
+    assert widget(at, "button", "approve").proto.disabled
+    downloads = at.get("download_button")
+    assert downloads and all(d.proto.disabled for d in downloads)
+
+
 def test_19_regenerate_approve_reject(cfg, port):
     from dashboard import views
     fake = FakeClient(F1)
