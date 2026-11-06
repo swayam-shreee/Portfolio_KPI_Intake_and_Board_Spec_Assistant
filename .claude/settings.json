@@ -8,7 +8,10 @@
      "Edit(tests/test_commentary_checker.py)", "Write(tests/test_commentary_checker.py)",
      "Edit(tests/fixtures/commentary/**)", "Write(tests/fixtures/commentary/**)",
      "Edit(docs/stage5_checker_spec.md)", "Write(docs/stage5_checker_spec.md)",
-     "Edit(.claude/settings.json)", "Write(.claude/settings.json)"
+     "Edit(.claude/settings.json)", "Write(.claude/settings.json)",
+     "Edit(tests/test_metrics.py)", "Write(tests/test_metrics.py)",
+     "Edit(docs/stage6a_review_loop_checker_spec.md)", "Write(docs/stage6a_review_loop_checker_spec.md)",
+     "Edit(tests/test_review_loop_checker.py)", "Write(tests/test_review_loop_checker.py)"
    ]
   }
 }

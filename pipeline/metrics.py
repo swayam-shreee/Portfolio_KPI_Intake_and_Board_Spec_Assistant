@@ -34,11 +34,11 @@ def _combine(parts: list, fn) -> _Part:
 
 
 class _Calc:
-    def __init__(self, table: pd.DataFrame, queue: list[ReviewItem]):
+    def __init__(self, table: pd.DataFrame, queue: list[ReviewItem], months: list[str] | None = None):
         self.queue = [q for q in queue if q.error_type != "prompt_injection"]
         self.cells = {(r.company, r.month, r.metric): (float(r.value_usd_k), (r.source_file, r.source_cell))
                       for r in table.itertuples()}
-        self.months = sorted(table["month"].unique())          # the reporting period
+        self.months = sorted(months) if months else sorted(table["month"].unique())   # the reporting period
         self.companies = list(dict.fromkeys(table["company"]))
         # beginning_arr is DERIVED (not reported) for a company that submitted no beginning_arr
         # row of its own; rows built by ingest.derive_beginning carry derived=True.
@@ -113,7 +113,9 @@ class _Calc:
         return out
 
 
-def compute(table: pd.DataFrame, review_queue: list[ReviewItem]) -> pd.DataFrame:
-    df = pd.DataFrame(_Calc(table, list(review_queue)).rows(), columns=list(METRIC_COLUMNS))
+def compute(table: pd.DataFrame, review_queue: list[ReviewItem],
+            months: list[str] | None = None) -> pd.DataFrame:
+    """``months`` pins the reporting period (a per-company rerun passes the portfolio's months)."""
+    df = pd.DataFrame(_Calc(table, list(review_queue), months).rows(), columns=list(METRIC_COLUMNS))
     df["value"] = df["value"].astype(object).where(df["value"].notna(), None)   # keep real None
     return df.sort_values(["company", "month", "metric_id"], kind="stable").reset_index(drop=True)

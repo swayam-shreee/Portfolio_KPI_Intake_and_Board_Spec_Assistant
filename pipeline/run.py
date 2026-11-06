@@ -9,7 +9,8 @@ from pipeline.contract import TABLE_COLUMNS, RunResult
 _COLS = list(TABLE_COLUMNS) + ["file_ts", "step_k"]
 
 
-def run(paths: list[str]) -> RunResult:
+def run(paths: list[str], *, aliases_path=None, accepted: frozenset = frozenset()) -> RunResult:
+    """``aliases_path`` and ``accepted`` default to today's behavior (tracked aliases, nothing accepted)."""
     files, seen_hashes = [], set()
     for p in paths:
         fd = ingest.read_file(p)
@@ -19,14 +20,14 @@ def run(paths: list[str]) -> RunResult:
         files.append(fd)
     recs, queue = [], []
     for fd in files:
-        r, items = mapping.to_records(fd)
+        r, items = mapping.to_records(fd, aliases_path)
         recs += r
         queue += items
     df = pd.DataFrame(recs, columns=_COLS)
     df, dup_items = ingest.resolve_duplicates(df)
     queue += dup_items
     df = ingest.derive_beginning(df).reset_index(drop=True)
-    df, check_items = checks.run_checks(df, files)
+    df, check_items = checks.run_checks(df, files, accepted)
     queue += check_items + checks.injection_items(files)
     table = df[list(TABLE_COLUMNS)].astype({"derived": bool})
     table = table.sort_values(["company", "month", "metric"]).reset_index(drop=True)

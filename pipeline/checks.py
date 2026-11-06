@@ -45,7 +45,7 @@ def _item(row, error_type, reason, metric=None, month=None) -> ReviewItem:
                       source_file=row["source_file"], source_cell=row["source_cell"], reason=reason)
 
 
-def run_checks(df: pd.DataFrame, files) -> tuple[pd.DataFrame, list[ReviewItem]]:
+def run_checks(df: pd.DataFrame, files, accepted: frozenset = frozenset()) -> tuple[pd.DataFrame, list[ReviewItem]]:
     items: list[ReviewItem] = []
     flagged: set = set()          # (company, month, metric) kept out of the table
     if df.empty:
@@ -96,7 +96,7 @@ def run_checks(df: pd.DataFrame, files) -> tuple[pd.DataFrame, list[ReviewItem]]
             elif r["metric"] in ("ending_arr", "beginning_arr") and arr_med and \
                     not (arr_med / 10 <= v <= arr_med * 10):
                 why = "ARR is more than 10x away from the company's median; possible unit mix-up."
-            if why:
+            if why and k not in accepted:     # a person accepted this value as reported
                 flagged.add(k)
                 items.append(_item(r, "impossible_value", why))
 
