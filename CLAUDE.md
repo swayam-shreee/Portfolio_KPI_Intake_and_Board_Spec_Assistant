@@ -46,3 +46,7 @@ The test files are prepared outside this project and placed in `data/raw/`; do n
 ## Out of scope
 
 Real company data, login, a database, cloud deployment, email or cloud-folder intake, a built Microsoft 365 integration, forecasting, and valuation.
+
+## Git
+
+Never commit or push unless the user explicitly instructs it in that message. Earlier instructions to commit (e.g. "commit after each stage") do not carry over to later work.

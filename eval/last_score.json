@@ -1,8 +1,8 @@
 {
-  "stage": 4,
-  "timestamp": "2026-11-06T04:36:38+00:00",
-  "git_sha": "fa5aaec",
-  "overall_pass": false,
+  "stage": 3,
+  "timestamp": "2026-11-06T04:45:05+00:00",
+  "git_sha": "756c044",
+  "overall_pass": true,
   "pipeline_error": null,
   "sections": {
     "schema": true,
@@ -11,8 +11,7 @@
     "values": true,
     "traceability": true,
     "duplicates": true,
-    "injection": true,
-    "metrics": false
+    "injection": true
   },
   "recall": "7/7",
   "recall_failed": [],
@@ -118,14 +117,7 @@
       "passed": true,
       "problems": []
     },
-    "overall_pass": false,
-    "pipeline_error": null,
-    "metrics": {
-      "passed": false,
-      "problems": [
-        "compute_metrics: NotImplementedError: stage 4: compute_metrics is not implemented yet"
-      ],
-      "metrics_error": "NotImplementedError: stage 4: compute_metrics is not implemented yet"
-    }
+    "overall_pass": true,
+    "pipeline_error": null
   }
 }
