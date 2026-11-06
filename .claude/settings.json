@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "deny": [
+     "Edit(eval/**)", "Write(eval/**)",
+     "Edit(pipeline/contract.py)", "Write(pipeline/contract.py)",
+     "Edit(tests/test_scorer.py)", "Write(tests/test_scorer.py)",
+     "Edit(tests/test_metrics_checker.py)", "Write(tests/test_metrics_checker.py)",
+     "Edit(tests/test_commentary_checker.py)", "Write(tests/test_commentary_checker.py)",
+     "Edit(tests/fixtures/commentary/**)", "Write(tests/fixtures/commentary/**)",
+     "Edit(docs/stage5_checker_spec.md)", "Write(docs/stage5_checker_spec.md)",
+     "Edit(.claude/settings.json)", "Write(.claude/settings.json)"
+   ]
+  }
+}

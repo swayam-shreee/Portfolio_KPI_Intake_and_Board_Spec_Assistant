@@ -6,7 +6,7 @@ import pandas as pd
 from pipeline import checks, ingest, mapping
 from pipeline.contract import TABLE_COLUMNS, RunResult
 
-_COLS = list(TABLE_COLUMNS) + ["file_ts", "derived", "step_k"]
+_COLS = list(TABLE_COLUMNS) + ["file_ts", "step_k"]
 
 
 def run(paths: list[str]) -> RunResult:
@@ -28,5 +28,6 @@ def run(paths: list[str]) -> RunResult:
     df = ingest.derive_beginning(df).reset_index(drop=True)
     df, check_items = checks.run_checks(df, files)
     queue += check_items + checks.injection_items(files)
-    table = df[list(TABLE_COLUMNS)].sort_values(["company", "month", "metric"]).reset_index(drop=True)
+    table = df[list(TABLE_COLUMNS)].astype({"derived": bool})
+    table = table.sort_values(["company", "month", "metric"]).reset_index(drop=True)
     return RunResult(table=table, review_queue=queue)

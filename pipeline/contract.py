@@ -40,7 +40,9 @@ COMPANIES = (
     "Cobalt Facilities", "Verity Legal Tech",
 )
 
-TABLE_COLUMNS = ("company", "month", "metric", "value_usd_k", "source_file", "source_cell")
+# ``derived`` is True only for beginning_arr rows that ingest.derive_beginning built from the prior
+# month's ending ARR; every cell a company actually submitted is False.
+TABLE_COLUMNS = ("company", "month", "metric", "value_usd_k", "source_file", "source_cell", "derived")
 
 METRIC_NAMES = (
     "mom_growth", "growth_12m", "nrr_12m", "grr_12m", "churn_rate", "gross_margin",
@@ -68,7 +70,7 @@ class RunResult:
 
 
 def compute_metrics(table: pd.DataFrame, review_queue: list[ReviewItem]) -> pd.DataFrame:
-    """Contract for stage 4 (not implemented yet): validated table + review queue -> metrics.
+    """Contract for stage 4 (implemented in pipeline.metrics): validated table + review queue -> metrics.
 
     Returns a DataFrame with columns ``METRIC_COLUMNS``: company, month (``YYYY-MM`` or
     ``"12m"``), metric_id, value, inputs, blocked_reason.
@@ -105,4 +107,6 @@ def compute_metrics(table: pd.DataFrame, review_queue: list[ReviewItem]) -> pd.D
     A metric whose inputs are under review or missing returns ``value=None`` and a non-empty
     ``blocked_reason`` naming the blocking review item. Never 0, never interpolated.
     """
-    raise NotImplementedError("stage 4: compute_metrics is not implemented yet")
+    from pipeline.metrics import compute  # deferred: pipeline.metrics imports this module
+
+    return compute(table, review_queue)

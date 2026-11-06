@@ -244,6 +244,23 @@ def test_selftest_fails_if_ground_truth_changes(gt):
     assert not S.checker_selftest(g)["passed"]
 
 
-def test_stub_compute_metrics_fails_stage4(table):
-    res = S.score_metrics_stage(type("R", (), {"table": table, "review_queue": []})())
-    assert not res["passed"] and "NotImplementedError" in res["metrics_error"]
+# ---------------------------------------------------------------- real pipeline output
+@pytest.fixture(scope="module")
+def pipeline_result():
+    from pipeline.run import run
+    return run(sorted(str(p) for p in S.RAW_DIR.iterdir() if p.suffix.lower() in (".xlsx", ".csv")))
+
+
+def test_compute_metrics_on_real_pipeline_passes_checker(pipeline_result, gt, key):
+    res = S.score_metrics_stage(pipeline_result, gt, key)
+    assert res["passed"], res
+    assert res["n_correct"] == res["n_expected"] == 250
+
+
+def test_compute_metrics_blocked_are_none_not_zero(pipeline_result):
+    from pipeline.contract import compute_metrics
+    m = compute_metrics(pipeline_result.table, pipeline_result.review_queue)
+    blocked = m[m.blocked_reason.notna()]
+    assert len(blocked) and all(v is None for v in blocked.value)
+    assert (m.value.dropna() != 0).all()
+    assert m[m.value.isna()].blocked_reason.str.strip().ne("").all()
