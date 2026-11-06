@@ -184,6 +184,13 @@ def rerun_company(p: Portfolio, company: str, cfg: Config) -> Portfolio:
     return _rerun(p, company, cfg, p.decisions)
 
 
+def _restore_aliases(path, snapshot) -> None:
+    if snapshot is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_bytes(snapshot)
+
+
 def resolve(p: Portfolio, item_id: str, action: str, cfg: Config) -> Portfolio:  # noqa: A002
     if action not in ("confirm", "reject"):
         raise ValueError(f"unknown action {action!r}")
@@ -194,6 +201,8 @@ def resolve(p: Portfolio, item_id: str, action: str, cfg: Config) -> Portfolio: 
                 "company": item.company, "month": item.month, "metric": item.metric,
                 "error_type": item.error_type, "source_file": item.source_file,
                 "source_cell": item.source_cell}
+    snapshot = None          # (bytes or None) of the learned aliases file, taken before learn_alias
+    learned = False
     if action == "confirm":
         if item.error_type not in CONFIRMABLE:
             raise ValueError(f"{item.error_type} items cannot be confirmed")
@@ -201,11 +210,23 @@ def resolve(p: Portfolio, item_id: str, action: str, cfg: Config) -> Portfolio: 
             label = raw_label(p, item)
             if label is None or item.suggestion is None:
                 raise ValueError("no label or no suggested metric to learn")
-            mapping.learn_alias(label, item.suggestion, cfg.aliases_path)
+            ap = Path(cfg.aliases_path)
+            snapshot = ap.read_bytes() if ap.exists() else None
+            learned = True
+            try:
+                mapping.learn_alias(label, item.suggestion, cfg.aliases_path)
+            except BaseException:
+                _restore_aliases(ap, snapshot)
+                raise
             decision.update(label=label, learned_metric=item.suggestion)
 
     decisions = p.decisions + [decision]
-    new = p if action == "reject" else _rerun(p, item.company, cfg, decisions)
+    try:
+        new = p if action == "reject" else _rerun(p, item.company, cfg, decisions)
+    except BaseException:
+        if learned:
+            _restore_aliases(Path(cfg.aliases_path), snapshot)
+        raise
     out = Portfolio(paths=list(new.paths),
                     files_by_company={c: list(v) for c, v in new.files_by_company.items()},
                     months=list(new.months), table=new.table.copy(), review_queue=list(new.review_queue),
