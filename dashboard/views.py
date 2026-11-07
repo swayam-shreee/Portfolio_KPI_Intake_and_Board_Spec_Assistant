@@ -90,11 +90,15 @@ def queue_rows(p) -> list[dict]:
         if _can_confirm(p, it):
             actions.append((f"confirm:{iid}", _CONFIRM_LABELS[it.error_type]))
         actions.append((f"reject:{iid}", "Mark as question"))
+        g = p.label_guesses.get(iid) if it.error_type == "unknown_label" else None
+        by_claude = bool(g) and g.get("metric") is not None and g["metric"] == it.suggestion
+        suggested_by = "claude" if by_claude else ("fuzzy" if it.suggestion else DASH)
         rows.append({"item_id": iid, "company": it.company, "month": it.month or DASH,
                      "metric": it.metric or DASH, "error_type": it.error_type,
                      "source_file": it.source_file, "source_cell": it.source_cell,
                      "reason": it.reason, "raw_label": review.raw_label(p, it) or DASH,
-                     "suggestion": it.suggestion or DASH, "actions": actions})
+                     "suggestion": it.suggestion or DASH, "suggested_by": suggested_by,
+                     "confidence": f"{g['confidence']:.2f}" if by_claude else DASH, "actions": actions})
     return rows
 
 
