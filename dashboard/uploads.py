@@ -16,6 +16,16 @@ class UploadResult:
     refused: list[tuple[str, str]] = field(default_factory=list)   # (name, reason)
 
 
+SKIPPED_TEXT = "already uploaded (same name and file hash)"
+REFUSED_TEXT = {
+    "bad_name": "file name not allowed",
+    "bad_type": "only .xlsx and .csv files are accepted",
+    "name_conflict": "a different file with this name was already uploaded",
+    "duplicate_content": "the same content was already uploaded under another name",
+    "unreadable": "the file could not be read as a KPI sheet",
+}
+
+
 def _bad_name(name: str) -> bool:
     return not name or "/" in name or "\\" in name or ".." in name or name.startswith(".")
 
