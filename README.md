@@ -106,8 +106,11 @@ CLAUDE_MODEL=claude-sonnet-5-5   # optional
 **3. Launch the dashboard**
 
 ```bash
-streamlit run app.py
+python scripts/fresh_start.py          # demo: starts empty and opens the Upload page
+streamlit run app.py                   # everyday: reloads the files you uploaded last time
 ```
+
+`fresh_start.py` moves the saved uploads and review decisions from `outputs/state/` to `outputs/archive/<timestamp>/` (nothing is deleted), then launches the dashboard on `--port` (default 8501). The **Start over** button on the Upload page does the same mid-session.
 
 Sample files for five fictional companies are in `data/raw/`. Upload them to see the full workflow.
 
@@ -116,16 +119,19 @@ Sample files for five fictional companies are in `data/raw/`. Upload them to see
 | Page | What you do |
 | --- | --- |
 | **⬆️ Upload** | Drop in the month's Excel and CSV files. The whole pipeline runs automatically. |
-| **📈 Overview** | See every company at a glance: ARR, growth, retention, churn, margin, and whether it's ready or needs review. |
+| **📈 Portfolio** | See every company at a glance: ARR, growth, retention, churn, margin, and whether it's ready or needs review. |
 | **🔍 Review queue** | Confirm or reject each flagged item, and ask Claude to suggest matches for unfamiliar labels. |
 | **📝 Board draft** | Generate the commentary, click any figure to see its source, approve the draft, and export it to Word. |
 
 ## Project structure
 
 ```
-app.py                  Dashboard home (portfolio overview)
-pages/                  Upload, Review queue, Board draft
-dashboard/              View logic, uploads, Word export, approvals
+app.py                  Portfolio page (overview); the sidebar order is Upload, Portfolio, Review queue, Board draft
+pages/                  Upload (welcome screen), Review queue, Board draft
+ui/                     Shared Streamlit chrome (sidebar navigation)
+.streamlit/config.toml  Theme and navigation settings
+dashboard/              View logic, uploads, Word export, approvals, start-over reset
+scripts/fresh_start.py  Demo launcher: archive saved state, start empty
 pipeline/
   run.py                Single entry point: files in → results out
   ingest.py             Layout detection, units, duplicates
