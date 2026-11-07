@@ -1,0 +1,51 @@
+[client]
+# Navigation is drawn by ui/nav.py, in demo order (Upload, Portfolio, Review queue, Board draft).
+showSidebarNavigation = false
+toolbarMode = "viewer"
+
+# One family (Inter, falling back to the system face), weight and size carry the hierarchy.
+# One accent, used only for actions. Hairline borders instead of shadows.
+[theme]
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+codeFont = "ui-monospace, 'SF Mono', Menlo, monospace"
+baseFontSize = 15
+headingFontSizes = ["2.5rem", "1.375rem", "1.125rem"]
+headingFontWeights = [700, 600, 600]
+baseRadius = "0.75rem"
+buttonRadius = "full"
+showWidgetBorder = true
+showSidebarBorder = false
+paddingTop = "3rem"
+
+[theme.light]
+primaryColor = "#0071E3"
+backgroundColor = "#FBFBFD"
+secondaryBackgroundColor = "#F5F5F7"
+textColor = "#1D1D1F"
+borderColor = "#E5E5EA"
+dataframeBorderColor = "#E8E8ED"
+dataframeHeaderBackgroundColor = "#F5F5F7"
+linkColor = "#0071E3"
+linkUnderline = false
+blueBackgroundColor = "#EEF4FB"
+blueTextColor = "#0062C4"
+
+[theme.light.sidebar]
+backgroundColor = "#F5F5F7"
+secondaryBackgroundColor = "#E8E8ED"
+
+[theme.dark]
+primaryColor = "#2997FF"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#1C1C1E"
+textColor = "#F5F5F7"
+borderColor = "#38383A"
+dataframeBorderColor = "#2C2C2E"
+dataframeHeaderBackgroundColor = "#1C1C1E"
+linkColor = "#2997FF"
+linkUnderline = false
+
+[theme.dark.sidebar]
+backgroundColor = "#161617"
+secondaryBackgroundColor = "#2C2C2E"
