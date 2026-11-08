@@ -82,13 +82,48 @@ def _read_decisions(cfg: Config) -> list:
     return [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
 
 
+def _undo_key(d: dict) -> tuple:
+    return (d["item_id"], d["ts"])
+
+
+def effective(decisions: list) -> list:
+    """The decisions still in force: undo lines and every decision an undo line points at are dropped."""
+    undone = {(d["item_id"], d.get("undoes_ts")) for d in decisions if d["action"] == "undo"}
+    return [d for d in decisions if d["action"] != "undo" and _undo_key(d) not in undone]
+
+
+def latest_decisions(decisions: list) -> dict:
+    """item_id -> that item's latest decision still in force."""
+    out: dict = {}
+    for d in effective(decisions):
+        out[d["item_id"]] = d
+    return out
+
+
 def _accepted(decisions: list) -> frozenset:
-    return frozenset((d["company"], d["month"], d["metric"]) for d in decisions
+    return frozenset((d["company"], d["month"], d["metric"]) for d in effective(decisions)
                      if d["action"] == "confirm" and d["error_type"] == "impossible_value")
 
 
+def _corrections(decisions: list) -> dict:
+    """{(company, month, metric, source_file, source_cell): value_usd_k} from corrections in force."""
+    return {(d["company"], d["month"], d["metric"], d["source_file"], d["source_cell"]):
+            float(d["corrected_value_usd_k"])
+            for d in effective(decisions) if d["action"] == "correct"}
+
+
+def proposed_value(item: ReviewItem) -> float | None:
+    """The code-proposed corrected value ($K) of an impossible_value item, or None."""
+    if item.error_type != "impossible_value" or not item.suggestion:
+        return None
+    try:
+        return float(item.suggestion)
+    except ValueError:
+        return None
+
+
 def _closed(decisions: list) -> frozenset:
-    return frozenset(d["item_id"] for d in decisions
+    return frozenset(d["item_id"] for d in effective(decisions)
                      if d["action"] == "confirm" and d["error_type"] in CLOSED_AT_INGEST)
 
 
@@ -166,7 +201,7 @@ def _seed_aliases(cfg: Config) -> None:
 
 
 def _replay_aliases(cfg: Config, decisions: list) -> None:
-    for d in decisions:
+    for d in effective(decisions):
         if d["action"] == "confirm" and d["error_type"] == "unknown_label" and d.get("label"):
             try:
                 mapping.learn_alias(d["label"], d["learned_metric"], cfg.aliases_path)
@@ -194,7 +229,8 @@ def load(cfg: Config, paths: list | None = None) -> Portfolio:
                 labels_at[(fd.source_file, s.label_cell)] = s.label
                 samples_at[(fd.source_file, s.label_cell)] = [s.values[m][0] for m in sorted(s.values)][:6]
 
-    res = run.run(paths, aliases_path=cfg.aliases_path, accepted=_accepted(decisions))
+    res = run.run(paths, aliases_path=cfg.aliases_path, accepted=_accepted(decisions),
+                  corrections=_corrections(decisions))
     guesses = _read_guesses(cfg)
     queue = _apply_guesses(_open_items(res.review_queue, decisions), guesses)
     months = sorted(res.table["month"].unique())
@@ -213,7 +249,8 @@ def load(cfg: Config, paths: list | None = None) -> Portfolio:
 
 def _rerun(p: Portfolio, company: str, cfg: Config, decisions: list) -> Portfolio:
     files = p.files_by_company[company]
-    res = run.run(files, aliases_path=cfg.aliases_path, accepted=_accepted(decisions))
+    res = run.run(files, aliases_path=cfg.aliases_path, accepted=_accepted(decisions),
+                  corrections=_corrections(decisions))
     queue = _apply_guesses(_open_items(res.review_queue, decisions), p.label_guesses)
     new_metrics = metrics.compute(res.table, queue, months=p.months)
     table = pd.concat([p.table[p.table["company"] != company], res.table], ignore_index=True)
@@ -288,6 +325,91 @@ def resolve(p: Portfolio, item_id: str, action: str, cfg: Config) -> Portfolio: 
     with open(cfg.state_dir / "decisions.jsonl", "a") as f:
         f.write(json.dumps(decision) + "\n")
     _write_record(cfg, "resolve", p.files_by_company[item.company], out.review_queue, [decision])
+    return out
+
+
+def correct(p: Portfolio, item_id: str, cfg: Config) -> Portfolio:  # noqa: A002
+    """Apply the code-proposed value of an ``impossible_value`` item (a unit slip under which the
+    month's ARR bridge ties). A person clicks it; nothing here guesses or types a number.
+
+    Appends ``{"action": "correct", "original_value" (as typed in the file), "corrected_value_usd_k", ...}`` to
+    ``decisions.jsonl`` and reruns that company only; ``undo`` reverses it. Raises ``KeyError`` for an
+    unknown id and ``ValueError`` when the item has no proposed value; nothing is written then.
+    """
+    item = next((i for i in p.review_queue if _item_id(i) == item_id), None)
+    if item is None:
+        raise KeyError(item_id)
+    value = proposed_value(item)
+    if value is None:
+        raise ValueError(f"{item.error_type} item {item_id} has no proposed correction")
+    original = original_k = None  # as typed in the file, and as read in $K (the flagged value is out of the table)
+    for path in p.files_by_company.get(item.company, []):
+        if Path(path).name != item.source_file:
+            continue
+        for s in ingest.read_file(path).series:
+            if item.month in s.values and s.values[item.month][1] == item.source_cell:
+                original = s.values[item.month][0]
+                original_k = original * (s.unit_factor or s.sheet_unit or 1.0)
+    decision = {"ts": datetime.now(timezone.utc).isoformat(), "item_id": item_id, "action": "correct",
+                "company": item.company, "month": item.month, "metric": item.metric,
+                "error_type": item.error_type, "source_file": item.source_file,
+                "source_cell": item.source_cell, "original_value": original,
+                "original_value_usd_k": original_k, "corrected_value_usd_k": value}
+    decisions = p.decisions + [decision]
+    new = _rerun(p, item.company, cfg, decisions)
+    out = _clone(new, decisions=decisions)
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    with open(cfg.state_dir / "decisions.jsonl", "a") as f:
+        f.write(json.dumps(decision) + "\n")
+    _write_record(cfg, "correct", p.files_by_company[item.company], out.review_queue, [decision])
+    return out
+
+
+def undo(p: Portfolio, item_id: str, cfg: Config) -> Portfolio:  # noqa: A002
+    """Undo the latest decision still in force for ``item_id`` by appending an ``undo`` line.
+
+    Nothing is removed from ``decisions.jsonl``. A reject undo changes only ``decisions``. A confirm
+    undo reruns the item's company so the item reopens; for ``unknown_label`` the learned aliases
+    file is first rebuilt from the seed plus the confirms still in force. Raises ``KeyError`` when the
+    item has no decision to undo; nothing is written when anything raises.
+    """
+    target = latest_decisions(p.decisions).get(item_id)
+    if target is None:
+        raise KeyError(item_id)
+    decision = {k: target.get(k) for k in ("item_id", "company", "month", "metric", "error_type",
+                                           "source_file", "source_cell")}
+    decision.update(ts=datetime.now(timezone.utc).isoformat(), action="undo", undoes_ts=target["ts"],
+                    undoes_action=target["action"])
+    decisions = p.decisions + [decision]
+    raw_labels = dict(p.raw_labels)
+    snapshot = None
+    relearn = target["action"] == "confirm" and target["error_type"] == "unknown_label"
+    ap = Path(cfg.aliases_path)
+    if relearn:
+        snapshot = ap.read_bytes() if ap.exists() else None
+    try:
+        if relearn:
+            ap.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(cfg.seed_aliases_path, ap)
+            mapping.load_aliases.cache_clear()
+            _replay_aliases(cfg, decisions)
+            mapping.load_aliases.cache_clear()
+            if target.get("label"):
+                raw_labels[item_id] = target["label"]      # the reopened item needs its label back
+        if target["action"] == "reject":
+            new = p
+        else:
+            new = _rerun(_clone(p, raw_labels=raw_labels), target["company"], cfg, decisions)
+    except BaseException:
+        if relearn:
+            _restore_aliases(ap, snapshot)
+            mapping.load_aliases.cache_clear()
+        raise
+    out = _clone(new, decisions=decisions)
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    with open(cfg.state_dir / "decisions.jsonl", "a") as f:
+        f.write(json.dumps(decision) + "\n")
+    _write_record(cfg, "undo", p.files_by_company[target["company"]], out.review_queue, [decision])
     return out
 
 

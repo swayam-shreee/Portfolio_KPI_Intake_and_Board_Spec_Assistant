@@ -1,6 +1,7 @@
 """Validation checks. Failing values go to the review queue and out of the table."""
 from __future__ import annotations
 
+import dataclasses
 import statistics
 
 import pandas as pd
@@ -25,18 +26,65 @@ def _months_between(a: str, b: str) -> list[str]:
     return out
 
 
+def _share(gap: float, row) -> str:
+    """|gap| as a share of the row's value, e.g. '0.15%' (materiality context for a reviewer)."""
+    base = abs(float(row["value_usd_k"]))
+    return f"{abs(gap) / base * 100:.2f}%" if base else "n/a"
+
+
+_BRIDGE = ("beginning_arr", "new_arr", "expansion_arr", "contraction_arr", "churned_arr", "ending_arr")
+
+
+def _unit_fix(cell: dict, company: str, month: str, metric: str, value: float, arr_med: float):
+    """The one value (value x1000 or /1000) that is back in the company's range AND makes this
+    month's ARR bridge tie within tolerance, else None. Code proposes (as the impossible_value
+    item's ``suggestion``, a $K number in text); only a person applies it, via review.correct."""
+    keys = [(company, month, x) for x in _BRIDGE]
+    if metric not in ("beginning_arr", "ending_arr") or not all(k in cell for k in keys):
+        return None
+    terms = {x: cell[k] for x, k in zip(_BRIDGE, keys)}
+    tol = ARR_TOL + sum(0.5 * r["step_k"] for x, r in terms.items() if x != metric and r["step_k"] > 1)
+    fits = []
+    for factor in (1 / 1000, 1000):
+        cand = value * factor
+        if not (arr_med / 10 <= cand <= arr_med * 10):
+            continue
+        v = {x: (cand if x == metric else float(r["value_usd_k"])) for x, r in terms.items()}
+        gap = v["beginning_arr"] + v["new_arr"] + v["expansion_arr"] - v["contraction_arr"] \
+            - v["churned_arr"] - v["ending_arr"]
+        if abs(gap) <= tol:
+            fits.append(round(cand, 6))
+    return fits[0] if len(fits) == 1 else None
+
+
+def _norm_text(text: str) -> str:
+    return " ".join(str(text).split()).casefold()
+
+
 def injection_items(files) -> list[ReviewItem]:
-    items = []
+    """One item per distinct instruction-like text per company. The same text repeated in a
+    resubmission (possibly at another cell) is one item, cited from the newest file, using the
+    same newest-wins order as ``ingest.resolve_duplicates`` (submitted date, then file name)."""
+    newest: dict = {}     # (company, normalized text) -> (sort key, ReviewItem)
+    order: list = []
     for fd in files:
+        company = fd.company or fd.source_file
         for cell, text in fd.text_cells:
-            if looks_like_instruction(text):
-                items.append(ReviewItem(
-                    company=fd.company or fd.source_file, month=None, metric=None,
-                    error_type="prompt_injection", source_file=fd.source_file, source_cell=cell,
-                    reason=("This cell contains instruction-like text aimed at an automated "
-                            "reader. It was treated as data, not followed, and no value was "
-                            "taken from it.")))
-    return items
+            if not looks_like_instruction(text):
+                continue
+            key = (company, _norm_text(text))
+            rank = (fd.submitted, fd.source_file)
+            if key in newest and newest[key][0] >= rank:
+                continue
+            if key not in newest:
+                order.append(key)
+            newest[key] = (rank, ReviewItem(
+                company=company, month=None, metric=None,
+                error_type="prompt_injection", source_file=fd.source_file, source_cell=cell,
+                reason=("This cell contains instruction-like text aimed at an automated "
+                        "reader. It was treated as data, not followed, and no value was "
+                        "taken from it.")))
+    return [newest[k][1] for k in order]
 
 
 def _item(row, error_type, reason, metric=None, month=None) -> ReviewItem:
@@ -86,6 +134,8 @@ def run_checks(df: pd.DataFrame, files, accepted: frozenset = frozenset()) -> tu
         arr_med = statistics.median(g[g.metric == "ending_arr"].value_usd_k) \
             if (g.metric == "ending_arr").any() else None
         for r in g.to_dict("records"):
+            if bool(r["derived"]):   # a derived value is a copy; its source gets these checks itself
+                continue
             k, v, why = (company, r["month"], r["metric"]), r["value_usd_k"], None
             if r["metric"] == "gross_margin_pct" and not 0 <= v <= 100:
                 why = f"Gross margin of {v:g}% is outside 0-100%."
@@ -98,7 +148,19 @@ def run_checks(df: pd.DataFrame, files, accepted: frozenset = frozenset()) -> tu
                 why = "ARR is more than 10x away from the company's median; possible unit mix-up."
             if why and k not in accepted:     # a person accepted this value as reported
                 flagged.add(k)
-                items.append(_item(r, "impossible_value", why))
+                item = _item(r, "impossible_value", why)
+                if why.startswith("ARR is more than 10x"):
+                    fix = _unit_fix(cell, company, r["month"], r["metric"], float(v), arr_med)
+                    if fix is not None:     # the proposed $K value, as text; never applied here
+                        item = dataclasses.replace(item, suggestion=f"{fix:g}")
+                items.append(item)
+
+        # derived values inherit their source's status: a derived beginning copied from a flagged
+        # ending is dropped too, with no item of its own (the source's item explains it), and
+        # metrics back-solves it from that month's components.
+        for r in g[g["derived"].astype(bool) & (g.metric == "beginning_arr")].itertuples():
+            if (company, _prev(r.month), "ending_arr") in flagged:
+                flagged.add((company, r.month, "beginning_arr"))
 
         # rollforward and continuity, in month order
         for m in sorted(months_present):
@@ -122,7 +184,8 @@ def run_checks(df: pd.DataFrame, files, accepted: frozenset = frozenset()) -> tu
                 flagged.add(keys[5])
                 items.append(_item(end, "rollforward_mismatch",
                                    f"Beginning + new + expansion - contraction - churn differs from "
-                                   f"ending ARR by {abs(gap):g} $K (tolerance {tol:g})."))
+                                   f"ending ARR by {abs(gap):g} $K ({_share(gap, end)} of ending ARR; "
+                                   f"tolerance {tol:g})."))
         for m in sorted(months_present):
             kb, ke = (company, m, "beginning_arr"), (company, _prev(m), "ending_arr")
             if kb in cell and ke in cell and not cell[kb]["derived"] and kb not in flagged \

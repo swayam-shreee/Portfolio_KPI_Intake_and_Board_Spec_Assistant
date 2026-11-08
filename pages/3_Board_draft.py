@@ -61,6 +61,8 @@ else:
             for reason in draft.reject_reasons:
                 st.text(reason)
         else:
+            for warning in getattr(draft, "warnings", None) or []:
+                st.warning(warning)
             for section in draft.sections:
                 with st.container(border=True):
                     name = views.section_name(section.company, p)
@@ -73,8 +75,16 @@ else:
                                      hide_index=True)
         with st.container(border=True):
             st.subheader("Open questions")
+            held = [q for q in draft.questions if getattr(q, "held_back", False)]
             for q in draft.questions:
-                st.text(q.text)
+                if not getattr(q, "held_back", False):
+                    st.text(q.text)
+            if held:
+                n = len(held)
+                with st.expander(f"{n} calculated figure{'s' if n != 1 else ''} wait on these "
+                                 f"answers (no reply needed)"):
+                    for q in held:
+                        st.text(q.text)
 
         st.space("small")
         with st.container(horizontal=True):

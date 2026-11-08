@@ -107,7 +107,9 @@ def parse_unit(text: str) -> Optional[float]:
         return 1000.0
     if re.search(r"\$\s*k\b|\bthousands?\b|\b000s?\b|\$\s*000|\(\s*000\s*\)|\(\s*k\s*\)", t):
         return 1.0
-    if re.search(r"\(\s*\$\s*\)|\busd\b|\bdollars?\b|\bwhole\b", t):
+    # "dollars" counts only as a tag ("(dollars)", "in dollars"), never as a word inside a
+    # metric name such as "Net Dollar Gains", which would wrongly scale the row by 1/1000.
+    if re.search(r"\(\s*\$\s*\)|\busd\b|\(\s*(?:in\s+)?dollars?\s*\)|\bin\s+dollars?\b|\bwhole\b", t):
         return 0.001
     return None
 

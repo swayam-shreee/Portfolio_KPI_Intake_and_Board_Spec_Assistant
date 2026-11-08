@@ -19,6 +19,7 @@ from pipeline.contract import METRIC_COLUMNS, ReviewItem
 
 _Part = tuple  # (value | None, inputs: tuple[(file, cell)], blockers: tuple[str])
 _COMPONENTS = ("ending_arr", "new_arr", "expansion_arr", "contraction_arr", "churned_arr")
+_BRIDGE_TERMS = ("beginning_arr", "new_arr", "expansion_arr", "contraction_arr", "churned_arr")
 
 
 def slug(company: str) -> str:
@@ -45,8 +46,23 @@ class _Calc:
         begin = table[table["metric"] == "beginning_arr"]
         reported = set(begin.loc[~begin["derived"].astype(bool), "company"])
         self.derived = {c for c in self.companies if c not in reported}
+        # A month whose own ARR bridge fails (item on ending_arr; an item on beginning_arr is the
+        # inherited case, blamed on a copied prior ending) cannot say which term is wrong, so
+        # every reported bridge term of that month is unverified.
+        self.suspect = {(it.company, it.month): it for it in self.queue
+                        if it.error_type == "rollforward_mismatch" and it.metric == "ending_arr"}
+
+    def _is_suspect(self, c: str, m: str, metric: str) -> bool:
+        if (c, m) not in self.suspect or metric not in _BRIDGE_TERMS:
+            return False
+        return metric != "beginning_arr" or c not in self.derived
 
     def _blocker(self, c: str, m: str, metric: str) -> str:
+        if self._is_suspect(c, m, metric):
+            it = self.suspect[(c, m)]
+            return (f"{c} {m} {metric} is blocked by review item {it.error_type} "
+                    f"at {it.source_file} {it.source_cell}: the {m} ARR bridge does not reconcile, "
+                    f"so none of its terms can be trusted until it is corrected")
         for it in self.queue:
             if it.company != c or it.month not in (None, m):
                 continue
@@ -56,11 +72,18 @@ class _Calc:
             if hit:
                 return (f"{c} {m} {metric} is blocked by review item {it.error_type} "
                         f"at {it.source_file} {it.source_cell}: {it.reason}")
+        # a whole line the company sent but nobody could map yet may be this metric
+        for it in self.queue:
+            if it.company == c and it.error_type == "unknown_label" and it.metric is None \
+                    and it.suggestion is None:
+                return (f"{c} {m} {metric} is blocked by review item {it.error_type} "
+                        f"at {it.source_file} {it.source_cell}: {metric} is missing and this "
+                        f"unmatched line may be it")
         return f"{c} {m} {metric} is missing from the table (no review item explains it)"
 
     def get(self, c: str, m: str, metric: str) -> _Part:
         hit = self.cells.get((c, m, metric))
-        if hit is None:
+        if hit is None or self._is_suspect(c, m, metric):
             return None, (), (self._blocker(c, m, metric),)
         return hit[0], (hit[1],), ()
 

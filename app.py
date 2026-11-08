@@ -17,7 +17,7 @@ else:
     st.space("small")
     with st.container(border=True):
         st.subheader("Companies")
-        st.caption("A company reads 'Needs review' while any of its values waits in the review queue.")
+        st.caption(views.overview_caption(p))
         st.dataframe(views.overview(p), hide_index=True)
     st.space("small")
     with st.container(border=True):

@@ -28,6 +28,19 @@ def _latest(p) -> str:
 
 
 # --------------------------------------------------------------------------- overview
+# Which period each overview figure covers, so the page can say so (the columns mix periods).
+OVERVIEW_PERIODS = {"ending_arr": "latest", "growth_12m": "12m", "nrr_12m": "12m",
+                    "churn_rate": "latest", "gross_margin": "latest"}
+
+
+def overview_caption(p) -> str:
+    latest = [c for c, k in OVERVIEW_PERIODS.items() if k == "latest"]
+    trailing = [c for c, k in OVERVIEW_PERIODS.items() if k == "12m"]
+    return (f"{', '.join(latest)} are for the latest month ({_latest(p)}); "
+            f"{', '.join(trailing)} cover the trailing twelve months. "
+            "A company reads 'Needs review' while any of its values waits in the review queue.")
+
+
 def overview(p) -> pd.DataFrame:
     cols = ["company", "ending_arr", "growth_12m", "nrr_12m", "churn_rate", "gross_margin",
             "open_items", "status"]
@@ -82,7 +95,37 @@ def _can_confirm(p, item) -> bool:
     return True
 
 
+def marked_as_question(p) -> set[str]:
+    """Item ids whose latest decision still in force is a reject ("Mark as question")."""
+    return {iid for iid, d in review.latest_decisions(p.decisions).items() if d["action"] == "reject"}
+
+
+def _decision_text(d: dict) -> str:
+    if d["action"] == "reject":
+        return "Marked as question"
+    if d["error_type"] == "unknown_label":
+        return f"Confirmed alias -> {d.get('learned_metric') or DASH}"
+    if d["action"] == "correct":
+        was = d.get("original_value_usd_k")
+        was = f" (was {was:,.0f} $K)" if isinstance(was, (int, float)) else ""
+        return f"Corrected to {float(d['corrected_value_usd_k']):,.0f} $K{was}"
+    if d["error_type"] == "impossible_value":
+        return "Accepted as reported"
+    return "Closed"
+
+
+def decision_rows(p) -> list[dict]:
+    """One row per item whose latest decision is still in force, newest first; each can be undone."""
+    rows = [{"item_id": iid, "ts": d["ts"], "company": d["company"], "month": d.get("month") or DASH,
+             "metric": d.get("metric") or DASH, "error_type": d["error_type"],
+             "source_file": d["source_file"], "source_cell": d["source_cell"], "what": _decision_text(d)}
+            for iid, d in review.latest_decisions(p.decisions).items()
+            if d["company"] in p.files_by_company]
+    return sorted(rows, key=lambda r: r["ts"], reverse=True)
+
+
 def queue_rows(p) -> list[dict]:
+    marked = marked_as_question(p)
     rows = []
     for it in p.review_queue:
         iid = review.item_id(it)
@@ -92,13 +135,19 @@ def queue_rows(p) -> list[dict]:
         actions.append((f"reject:{iid}", "Mark as question"))
         g = p.label_guesses.get(iid) if it.error_type == "unknown_label" else None
         by_claude = bool(g) and g.get("metric") is not None and g["metric"] == it.suggestion
-        suggested_by = "claude" if by_claude else ("fuzzy" if it.suggestion else DASH)
+        fix = review.proposed_value(it)
+        suggested_by = "claude" if by_claude else "bridge check" if fix is not None else \
+            ("fuzzy" if it.suggestion else DASH)
+        # a separate action, kept out of ``actions`` (those are exactly the confirm/reject pair)
+        correction = (f"correct:{iid}", f"Use {fix:,.0f} $K (the bridge ties)") if fix is not None else None
         rows.append({"item_id": iid, "company": it.company, "month": it.month or DASH,
                      "metric": it.metric or DASH, "error_type": it.error_type,
                      "source_file": it.source_file, "source_cell": it.source_cell,
                      "reason": it.reason, "raw_label": review.raw_label(p, it) or DASH,
                      "suggestion": it.suggestion or DASH, "suggested_by": suggested_by,
-                     "confidence": f"{g['confidence']:.2f}" if by_claude else DASH, "actions": actions})
+                     "confidence": f"{g['confidence']:.2f}" if by_claude else DASH, "actions": actions,
+                     "correction": correction,
+                     "status": "Marked as question" if iid in marked else "Needs decision"})
     return rows
 
 
