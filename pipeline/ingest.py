@@ -152,6 +152,39 @@ def _detect_company(candidates: list[str]) -> Optional[str]:
     return best
 
 
+# Words that mark a title line as a description rather than a company name.
+_NOT_NAME = {"kpi", "kpis", "metric", "metrics", "monthly", "quarterly", "report", "pack", "export",
+             "submission", "submitted", "values", "value", "amounts", "figures", "dollar", "dollars",
+             "usd", "data", "sheet", "summary", "investor", "investors", "board", "all", "in", "unless"}
+_TITLE_SPLIT = re.compile(r"\s+[-–—:|]\s+")
+_NAME_WORD = re.compile(r"[A-Za-z][A-Za-z&.'’]*")
+
+
+def _title_name(text: str) -> Optional[str]:
+    """'Foxglove Legal - Monthly KPIs' -> 'Foxglove Legal'; None if the text is not a name."""
+    words = text.strip().split()
+    if not 1 <= len(words) <= 5 or not all(_NAME_WORD.fullmatch(w) for w in words):
+        return None
+    if any(w.lower().strip(".") in _NOT_NAME for w in words):
+        return None
+    name = " ".join(words)
+    return name.title() if name.isupper() else name
+
+
+def _company_from_title(top_text: list[str]) -> Optional[str]:
+    """A company outside COMPANIES, named in a title line above the header row. A title with
+    a separator ('Name - Monthly KPIs') wins over a line that is only a name. The file name
+    is never used, so a file with no title stays unread."""
+    for t in top_text:
+        parts = _TITLE_SPLIT.split(t.strip(), maxsplit=1)
+        if len(parts) == 2 and (name := _title_name(parts[0])):
+            return name
+    for t in top_text:
+        if (name := _title_name(t)) and len(name.split()) >= 2:
+            return name
+    return None
+
+
 def _submitted_ts(top_text: list[str], path: Path) -> float:
     for t in top_text:
         m = re.search(r"(?:submitted|sent|date)\D{0,12}(\d{4}-\d{2}-\d{2})", t, re.I)
@@ -239,14 +272,17 @@ def read_file(path: str | Path) -> FileData:
     path = Path(path)
     fd = FileData(source_file=path.name, company=None, submitted=0.0,
                   sha256=hashlib.sha256(path.read_bytes()).hexdigest())
-    candidates, top = [path.stem], []
+    candidates, top, titles = [path.stem], [], []
     for sheet, grid in _read_grids(path):
         fd.text_cells += [(_ref(sheet, r, c), v) for (r, c), v in sorted(grid.items())
                           if isinstance(v, str)]
         t = _extract_sheet(sheet, grid, fd)
         top += t
         candidates += t[:3]
+        titles += t[:3]
     fd.company = _detect_company(candidates)
+    if fd.company is None and fd.series:
+        fd.company = _company_from_title(titles)
     fd.submitted = _submitted_ts(top, path)
     return fd
 
