@@ -22,7 +22,7 @@ REFUSED_TEXT = {
     "bad_type": "only .xlsx and .csv files are accepted",
     "name_conflict": "a different file with this name was already uploaded",
     "duplicate_content": "the same content was already uploaded under another name",
-    "unreadable": "the file could not be read as a KPI sheet",
+    "unreadable": "no monthly KPI data, or no company name in the file's title line or file name",
 }
 
 
